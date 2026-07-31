@@ -4,8 +4,8 @@
 
 set(SOURCES
     Source/Main.cpp
-    #Source/EditorLayer.h
-    #Source/EditorLayer.cpp
+    Source/EditorLayer.h
+    Source/EditorLayer.cpp
 )
 
 add_executable(ElectricalWiringSimulator)

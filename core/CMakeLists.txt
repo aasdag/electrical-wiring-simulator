@@ -12,8 +12,9 @@ set(SOURCES
     Source/Core/Layer.h
     Source/Core/Event.h
 
-    Source/Core/Renderer/Renderer.h
-    Source/Core/Renderer/Renderer.cpp
+    # Add these once they contain actual code:
+    # Source/Core/Renderer/Renderer.h
+    # Source/Core/Renderer/Renderer.cpp
 )
 
 add_library(Core STATIC)

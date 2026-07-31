@@ -13,19 +13,13 @@ set(BUILD_EXAMPLES OFF CACHE BOOL
 )
 
 add_subdirectory(
-    "${CMAKE_SOURCE_DIR}/external/raylib-6.0"
-    "${CMAKE_BINARY_DIR}/external/raylib"
-    EXCLUDE_FROM_ALL
+    "${CMAKE_CURRENT_SOURCE_DIR}/external/raylib-6.0"
 )
 
 add_subdirectory(
-    "${CMAKE_SOURCE_DIR}/external/imgui-docking"
-    "${CMAKE_BINARY_DIR}/external/imgui"
-    EXCLUDE_FROM_ALL
+    "${CMAKE_CURRENT_SOURCE_DIR}/external/imgui-docking"
 )
 
 add_subdirectory(
-    "${CMAKE_SOURCE_DIR}/external/rlimgui"
-    "${CMAKE_BINARY_DIR}/external/rlimgui"
-    EXCLUDE_FROM_ALL
+    "${CMAKE_CURRENT_SOURCE_DIR}/external/rlimgui"
 )
