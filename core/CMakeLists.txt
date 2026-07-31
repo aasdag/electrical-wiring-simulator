@@ -1,29 +1,46 @@
+#
+# Core
+#
+
 set(SOURCES
-Application.h
-Application.cpp
-Window.h
-Window.cpp
-Layer.h
-#Source/Core/Renderer/Renderer.h
-#Source/Core/Renderer/Renderer.cpp
-#Source/Core/Renderer/Shader.h
-#ource/Core/Renderer/Shader.cpp
-#Source/Core/Renderer/GLUtils.h
-#Source/Core/Renderer/GLUtils.cpp
+    Source/Core/Application.h
+    Source/Core/Application.cpp
+
+    Source/Core/Window.h
+    Source/Core/Window.cpp
+
+    Source/Core/Layer.h
+    Source/Core/Event.h
+
+    Source/Core/Renderer/Renderer.h
+    Source/Core/Renderer/Renderer.cpp
 )
 
 add_library(Core STATIC)
 
-target_sources(Core PRIVATE ${SOURCES})
-
-source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES ${SOURCES})
-
-add_compile_definitions(
-    GLFW_INCLUDE_NONE
+target_sources(Core
+    PRIVATE
+        ${SOURCES}
 )
 
-#target_link_libraries(Core glfw)
-#target_link_libraries(Core glad)
-#target_link_libraries(Core glm)
+source_group(
+    TREE "${CMAKE_CURRENT_SOURCE_DIR}"
+    FILES ${SOURCES}
+)
 
-target_include_directories(Core PUBLIC "Source")
+target_include_directories(Core
+    PUBLIC
+        "${CMAKE_CURRENT_SOURCE_DIR}/Source"
+)
+
+target_link_libraries(Core
+    PUBLIC
+        raylib_static
+        imgui
+        rlimgui
+)
+
+target_compile_features(Core
+    PUBLIC
+        cxx_std_23
+)
