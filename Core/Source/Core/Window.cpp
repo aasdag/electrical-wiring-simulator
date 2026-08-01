@@ -1,6 +1,6 @@
-#include<Window.h>
+#include <Core/Window.h>
 
-#include<iostream>
+#include <iostream>
 
 namespace Core
 {

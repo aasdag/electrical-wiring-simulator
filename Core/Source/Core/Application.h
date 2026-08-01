@@ -1,11 +1,11 @@
 #pragma once
 
-#include<Layer.h>
-#include<Window.h>
+#include "Core/Layer.h"
+#include "Core/Window.h"
 
-#include<string>
-#include<memory>
-#include<vector>
+#include <string>
+#include <memory>
+#include <vector>
 
 namespace Core
 {

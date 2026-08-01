@@ -1,14 +1,15 @@
 #pragma once
 
-#include<string>
+#include <cstdint>
+#include <string>
 
 namespace Core
 {
     struct WindowSpecification
     {
         std::string title;
-        uint32_t width = 1280;
-        uint32_t height = 720;
+        std::uint32_t width = 1280;
+        std::uint32_t height = 720;
         bool isResizeable = true;
         bool vSync = true;
     };
