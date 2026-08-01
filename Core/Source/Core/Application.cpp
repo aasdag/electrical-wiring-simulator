@@ -1,5 +1,9 @@
 #include "Core/Application.h"
 
+#include <raylib.h>
+#include <imgui.h>
+#include <rlImGui.h>
+
  namespace Core
  {
     static Application* s_application = nullptr;
@@ -23,10 +27,12 @@
 
     Application::~Application()
     {
-        m_window->destroy();
+        m_layerStack.clear();
 
-        //TODO: Destruction of application logic
+        rlImGuiShutdown();
 
+        m_window.reset();
+        
         s_application = nullptr;
     }
 
@@ -58,5 +64,20 @@
 
             m_window->update();
         }
+    }
+
+    void Application::stop()
+    {
+        m_running = false;
+    }
+
+    Application& Application::get()
+    {
+        return *s_application;
+    }
+
+	float Application::getTime()
+    {
+        return static_cast<float>(GetTime());
     }
  }
