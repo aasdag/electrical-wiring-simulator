@@ -38,6 +38,16 @@ namespace Core
         }
     }
 
+    void Window::beginFrame()
+    {
+        BeginDrawing();
+    }
+
+    void Window::endFrame()
+    {
+        EndDrawing();
+    }
+
     void Window::update()
     {
         //TODO: Update logic

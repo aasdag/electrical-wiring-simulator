@@ -22,6 +22,8 @@ namespace Core
 
         void create();
         void destroy();
+        void beginFrame();
+	    void endFrame();
 
         void update();
 

@@ -32,7 +32,7 @@
         rlImGuiShutdown();
 
         m_window.reset();
-        
+
         s_application = nullptr;
     }
 
@@ -51,18 +51,23 @@
             }
 
             float currentTime = getTime();
-            //TODO: Implement when math is added: float timeStep = glm::clamp(currentTime - lastTime, 0.001f, 0.1f);
+            float timeStep = currentTime - lastTime;
             lastTime = currentTime;
 
             //Main layer update here
             for (const std::unique_ptr<Layer>& layer : m_layerStack)
 				layer->onUpdate(/*timestep*/0.001f);
 
+            m_window->beginFrame();
+            ClearBackground(RAYWHITE);
+
 			// NOTE: rendering can be done elsewhere (eg. render thread)
 			for (const std::unique_ptr<Layer>& layer : m_layerStack)
 				layer->onRender();
 
             m_window->update();
+
+            m_window->endFrame();
         }
     }
 
