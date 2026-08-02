@@ -6,15 +6,12 @@
 
 void EditorLayer::onUpdate(float timeStep)
 {
-    // Update editor state here.
-    // For example:
-    // - Update camera
-    // - Handle wire drawing
-    // - Handle symbol placement
+   //m_time += timeStep;
 }
 
 void EditorLayer::onRender()
 {
+    DrawText("EditorLayer active", 100, 100, 20, RED);
     // Draw the electrical plan using Raylib here.
     //
     // Example:

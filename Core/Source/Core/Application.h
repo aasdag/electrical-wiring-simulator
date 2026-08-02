@@ -32,6 +32,8 @@ namespace Core
 	    m_layerStack.push_back(std::make_unique<TLayer>());
 	}
 
+	void queueTransition(Layer* currentLayer, std::unique_ptr<Layer> newLayer);
+
 	static Application& get();
 	static float getTime();
     private:
@@ -39,6 +41,18 @@ namespace Core
 	std::shared_ptr<Window> m_window;
 	bool m_running = false;
 
+	struct LayerTransition
+	{
+		Layer* currentLayer;
+		std::unique_ptr<Layer> newLayer;
+	};
+
+	void processLayerTransitions();
+
 	std::vector<std::unique_ptr<Layer>> m_layerStack;
+	std::vector<LayerTransition> m_pendingTransitions;
+
+	
+
     };
 }

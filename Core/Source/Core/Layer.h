@@ -2,6 +2,8 @@
 
 #include "Core/Event.h"
 
+#include <memory>
+
 namespace Core
 {
     class Layer
@@ -13,5 +15,13 @@ namespace Core
         virtual void onUpdate(float ts) {}
         virtual void onRender() {}
         virtual void onImGuiRender() {}
+
+        template<std::derived_from<Layer> T, typename... Args>
+        void transitionTo(Args&&... args)
+        {
+            queueTransition(std::make_unique<T>(std::forward<Args>(args)...));
+        }
+    private:
+        void queueTransition(std::unique_ptr<Layer> layer);
     };
 }

@@ -68,6 +68,8 @@
             m_window->update();
 
             m_window->endFrame();
+
+            processLayerTransitions();
         }
     }
 
@@ -75,6 +77,12 @@
     {
         m_running = false;
     }
+
+    void Application::queueTransition(Layer* currentLayer, std::unique_ptr<Layer> newLayer)
+    {
+        m_pendingTransitions.push_back({currentLayer, std::move(newLayer)});
+    }
+
 
     Application& Application::get()
     {
@@ -84,5 +92,22 @@
 	float Application::getTime()
     {
         return static_cast<float>(GetTime());
+    }
+
+    void Application::processLayerTransitions()
+    {
+        for(auto& transition : m_pendingTransitions)
+        {
+            for(auto& layer : m_layerStack)
+            {
+                if(layer.get() == transition.currentLayer)
+                {
+                    layer = std::move(transition.newLayer);
+                    break;
+                }
+            }
+        }
+
+        m_pendingTransitions.clear();
     }
  }
