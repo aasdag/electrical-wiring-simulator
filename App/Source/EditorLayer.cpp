@@ -1,15 +1,21 @@
 #include "EditorLayer.h"
-
+#include "TestLayer.h"
 #include <imgui.h>
 #include <print>
 #include <raylib.h>
+
+EditorLayer::EditorLayer()
+{
+    std::println("{}", "Creating new EditorLayer");
+}
 
 void EditorLayer::onUpdate(float timeStep)
 {
    //m_time += timeStep;
    if(IsKeyDown(KEY_TWO))
    {
-        transitionTo(VoidLayer);
+        std::println("{}", "Transitioning to 'TestLayer'");
+        transitionTo<TestLayer>();
    }
 }
 
