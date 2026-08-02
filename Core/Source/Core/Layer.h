@@ -3,6 +3,7 @@
 #include "Core/Event.h"
 
 #include <memory>
+#include <utility>
 
 namespace Core
 {

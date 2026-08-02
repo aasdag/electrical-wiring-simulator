@@ -10,6 +10,7 @@ set(SOURCES
     Source/Core/Window.cpp
 
     Source/Core/Layer.h
+    Source/Core/Layer.cpp
     Source/Core/Event.h
 
     # Add these once they contain actual code:

@@ -7,6 +7,10 @@
 void EditorLayer::onUpdate(float timeStep)
 {
    //m_time += timeStep;
+   if(IsKeyDown(KEY_TWO))
+   {
+        transitionTo(VoidLayer);
+   }
 }
 
 void EditorLayer::onRender()
