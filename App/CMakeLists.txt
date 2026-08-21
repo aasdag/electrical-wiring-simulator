@@ -8,6 +8,8 @@ set(SOURCES
     Source/EditorLayer.cpp
     Source/TestLayer.h
     Source/TestLayer.cpp
+    Source/FileHandler.h
+    Source/FileHandler.cpp
 )
 
 add_executable(ElectricalWiringSimulator)

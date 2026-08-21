@@ -1,3 +1,4 @@
+#include "Core/Application.h"
 #include "EditorLayer.h"
 #include "TestLayer.h"
 #include <imgui.h>
@@ -32,12 +33,54 @@ void EditorLayer::onRender()
 
 void EditorLayer::onImGuiRender()
 {
-    ImGui::Begin("Electrical Wiring Simulator");
+    renderMenuBar();
+}
 
-    if (ImGui::Button("My button"))
+void EditorLayer::renderMenuBar()
+{
+    if (ImGui::BeginMainMenuBar())
     {
-        std::println("'My button' clicked");
-    }
+        if (ImGui::BeginMenu("File"))
+        {
+            if (ImGui::MenuItem("New"))
+            {
 
-    ImGui::End();
+            }
+            if (ImGui::MenuItem("Open"))
+            {
+
+            }
+            if (ImGui::MenuItem("Save"))
+            {
+
+            }
+
+            ImGui::Separator();
+
+            if (ImGui::MenuItem("Exit"))
+            {
+                Core::Application::get().stop();
+            }
+
+            ImGui::EndMenu();
+        }
+
+        ImGui::EndMainMenuBar();
+    }
+}
+
+void EditorLayer::renderToolbar()
+{
+}
+
+void EditorLayer::renderToolPanel()
+{
+}
+
+void EditorLayer::renderPropertiesPanel()
+{
+}
+
+void EditorLayer::renderStatusBar()
+{
 }

@@ -23,6 +23,7 @@
         m_window = std::make_shared<Window>(m_specification.windowSpec);
         m_window->create();
 
+        rlImGuiSetup(true);
     }
 
     Application::~Application()
@@ -56,16 +57,21 @@
 
             //Main layer update here
             for (const std::unique_ptr<Layer>& layer : m_layerStack)
-				layer->onUpdate(/*timestep*/0.001f);
+				layer->onUpdate(timeStep);
 
             m_window->beginFrame();
             ClearBackground(RAYWHITE);
 
 			// NOTE: rendering can be done elsewhere (eg. render thread)
 			for (const std::unique_ptr<Layer>& layer : m_layerStack)
-				layer->onRender();
+				layer->onRender();;
 
-            m_window->update();
+            rlImGuiBegin();
+
+            for (const std::unique_ptr<Layer>& layer : m_layerStack)
+                layer->onImGuiRender();
+
+            rlImGuiEnd();
 
             m_window->endFrame();
 
