@@ -1,4 +1,5 @@
 #include "EditorLayer.h"
+#include "ComponentRenderer.h"
 
 #include "Core/Application.h"
 #include "TestLayer.h"
@@ -159,252 +160,7 @@ namespace
         return ex * ex + ey * ey;
     }
 
-    // A single-pole light-switch symbol in canvas coordinates, rotated around its center.
-    void drawLightSwitch(ImDrawList* draw, ImVec2 center,
-                         const ElectricalComponent& component, bool preview, bool selected = false,
-                         bool closed = false, bool resizeHandle = false)
-    {
-        const ImU32 stroke = preview ? IM_COL32(90, 186, 255, 160)
-                                   : closed ? IM_COL32(95, 225, 161, 255)
-                                            : IM_COL32(148, 217, 255, 255);
-        const ImU32 fill = preview ? IM_COL32(90, 186, 255, 110)
-                                 : closed ? IM_COL32(35, 160, 106, 255)
-                                          : IM_COL32(45, 117, 177, 255);
-        const float radians = component.rotation() * (3.14159265f / 180.0f);
-        const float cs = std::cos(radians), sn = std::sin(radians);
-        const auto point = [&](float x, float y) {
-            return ImVec2(center.x + x * cs - y * sn,
-                          center.y + x * sn + y * cs);
-        };
 
-        // The switch mechanism has a fixed 2-cell contact spacing.
-        // Only the wire stubs to the outer terminals change with terminal span.
-        const float contactOffset = static_cast<float>(ElectricalComponent::gridSize);
-        const float halfLength = component.halfLengthPx();
-        draw->AddLine(point(-halfLength, 0), point(-contactOffset, 0), stroke, 2.2f);
-        draw->AddLine(point(contactOffset, 0), point(halfLength, 0), stroke, 2.2f);
-        draw->AddCircleFilled(point(-halfLength, 0), 3.0f, stroke);
-        draw->AddCircleFilled(point(halfLength, 0), 3.0f, stroke);
-        draw->AddCircleFilled(point(-contactOffset, 0), 4.3f, fill);
-        draw->AddCircle(point(-contactOffset, 0), 4.3f, stroke, 0, 1.8f);
-        draw->AddCircleFilled(point(contactOffset, 0), 4.3f, fill);
-        draw->AddCircle(point(contactOffset, 0), 4.3f, stroke, 0, 1.8f);
-        draw->AddLine(point(-contactOffset, 0),
-                      closed ? point(contactOffset, 0) : point(contactOffset - 8.0f, -16.0f),
-                      stroke, 2.4f);
-
-        if (selected)
-        {
-            const float outline = halfLength + 8.0f;
-            draw->AddQuad(point(-outline, -24), point(outline, -24),
-                          point(outline, 24), point(-outline, 24),
-                          IM_COL32(88, 191, 255, 255), 2.0f);
-            if (resizeHandle)
-            {
-                const ImVec2 handle = point(halfLength + 9.0f, 0);
-                draw->AddRectFilled(ImVec2(handle.x - 6, handle.y - 6),
-                                    ImVec2(handle.x + 6, handle.y + 6),
-                                    IM_COL32(88, 191, 255, 255), 2.0f);
-            }
-        }
-
-        const std::string label = component.label().empty()
-            ? "S" + std::to_string(component.id()) : component.label();
-        const float labelWidth = ImGui::CalcTextSize(label.c_str()).x;
-        draw->AddText(ImVec2(center.x - labelWidth * 0.5f, center.y + 16.0f),
-                      stroke, label.c_str());
-    }
-
-    // IEC-style lamp: a circle with a diagonal cross. Its symbol stays fixed at
-    // one grid cell radius; only the terminal leads vary with the configured span.
-    void drawLamp(ImDrawList* draw, ImVec2 center,
-                  const ElectricalComponent& component, bool preview,
-                  bool selected = false, bool resizeHandle = false)
-    {
-        const ImU32 stroke = preview ? IM_COL32(90, 186, 255, 160)
-                                     : IM_COL32(148, 217, 255, 255);
-        const float angle = component.rotation() * (3.14159265f / 180.0f);
-        const float cs = std::cos(angle), sn = std::sin(angle);
-        const auto point = [&](float x, float y) {
-            return ImVec2(center.x + x * cs - y * sn,
-                          center.y + x * sn + y * cs);
-        };
-
-        const float radius = static_cast<float>(ElectricalComponent::gridSize);
-        const float halfLength = component.halfLengthPx();
-        const float diagonal = radius * 0.70710678f;
-        draw->AddLine(point(-halfLength, 0), point(-radius, 0), stroke, 2.2f);
-        draw->AddLine(point(radius, 0), point(halfLength, 0), stroke, 2.2f);
-        draw->AddCircle(center, radius, stroke, 0, 2.2f);
-        draw->AddLine(point(-diagonal, -diagonal), point(diagonal, diagonal), stroke, 2.0f);
-        draw->AddLine(point(-diagonal, diagonal), point(diagonal, -diagonal), stroke, 2.0f);
-        draw->AddCircleFilled(point(-halfLength, 0), 3.0f, stroke);
-        draw->AddCircleFilled(point(halfLength, 0), 3.0f, stroke);
-
-        if (selected)
-        {
-            const float outline = halfLength + 8.0f;
-            draw->AddQuad(point(-outline, -24), point(outline, -24),
-                          point(outline, 24), point(-outline, 24),
-                          IM_COL32(88, 191, 255, 255), 2.0f);
-            if (resizeHandle)
-            {
-                const ImVec2 handle = point(halfLength + 9.0f, 0);
-                draw->AddRectFilled(ImVec2(handle.x - 6, handle.y - 6),
-                                    ImVec2(handle.x + 6, handle.y + 6),
-                                    IM_COL32(88, 191, 255, 255), 2.0f);
-            }
-        }
-
-        const std::string label = component.label().empty()
-            ? "H" + std::to_string(component.id()) : component.label();
-        const float labelWidth = ImGui::CalcTextSize(label.c_str()).x;
-        draw->AddText(ImVec2(center.x - labelWidth * 0.5f, center.y + 24.0f),
-                      stroke, label.c_str());
-    }
-
-    void drawSupplyInput(ImDrawList* draw, ImVec2 center,
-                         const ElectricalComponent& component, bool preview,
-                         bool selected = false, bool resizeHandle = false)
-    {
-        const ImU32 stroke = preview ? IM_COL32(90, 186, 255, 160)
-                                     : IM_COL32(148, 217, 255, 255);
-        const float angle = component.rotation() * (3.14159265f / 180.0f);
-        const float cs = std::cos(angle), sn = std::sin(angle);
-        const auto point = [&](float x, float y) {
-            return ImVec2(center.x + x * cs - y * sn,
-                          center.y + x * sn + y * cs);
-        };
-
-        const float grid = static_cast<float>(ElectricalComponent::gridSize);
-        const float halfLength = component.halfLengthPx();
-        const ImVec2 topLeft = point(-2.0f * grid, -grid);
-        const ImVec2 topRight = point(0.0f, -grid);
-        const ImVec2 bottomRight = point(0.0f, grid);
-        const ImVec2 bottomLeft = point(-2.0f * grid, grid);
-        draw->AddQuadFilled(topLeft, topRight, bottomRight, bottomLeft,
-                            IM_COL32(32, 48, 68, preview ? 145 : 255));
-        draw->AddQuad(topLeft, topRight, bottomRight, bottomLeft, stroke, 2.2f);
-        draw->AddLine(point(0.0f, 0.0f), point(halfLength, 0.0f), stroke, 2.2f);
-        draw->AddCircleFilled(point(halfLength, 0.0f), 3.0f, stroke);
-
-        const ImVec2 labelCenter = point(-grid, 0.0f);
-        const ImVec2 labelSize = ImGui::CalcTextSize("IN");
-        draw->AddText(ImVec2(labelCenter.x - labelSize.x * 0.5f,
-                             labelCenter.y - labelSize.y * 0.5f), stroke, "IN");
-        const auto& settings = component.supplySettings();
-        if (settings.showDescription)
-        {
-            const char* systems[] = { "IT", "TN", "TT", "DC" };
-            const std::string details = std::to_string(settings.voltage) + " V " +
-                systems[static_cast<int>(settings.system) - 1];
-            const ImVec2 textSize = ImGui::CalcTextSize(details.c_str());
-            draw->AddText(ImVec2(center.x - textSize.x * 0.5f, center.y + 26.0f),
-                          stroke, details.c_str());
-        }
-        const std::string name = component.label().empty()
-            ? "IN" + std::to_string(component.id()) : component.label();
-        const ImVec2 nameSize = ImGui::CalcTextSize(name.c_str());
-        draw->AddText(ImVec2(center.x - nameSize.x * 0.5f, center.y - 39.0f),
-                      stroke, name.c_str());
-
-        if (selected)
-        {
-            draw->AddQuad(point(-2.0f * grid - 8.0f, -grid - 8.0f),
-                          point(halfLength + 8.0f, -grid - 8.0f),
-                          point(halfLength + 8.0f, grid + 8.0f),
-                          point(-2.0f * grid - 8.0f, grid + 8.0f),
-                          IM_COL32(88, 191, 255, 255), 2.0f);
-            if (resizeHandle)
-            {
-                const ImVec2 handle = point(halfLength + 9.0f, 0.0f);
-                draw->AddRectFilled(ImVec2(handle.x - 6.0f, handle.y - 6.0f),
-                                    ImVec2(handle.x + 6.0f, handle.y + 6.0f),
-                                    IM_COL32(88, 191, 255, 255), 2.0f);
-            }
-        }
-    }
-
-    // Compact single-line representations: one symbol per device, while the
-    // logical component ID and its terminal positions remain unchanged.
-    void drawSingleLineDevice(ImDrawList* draw, ImVec2 center,
-                              const ElectricalComponent& component, bool preview,
-                              bool selected, bool closed, bool resizeHandle)
-    {
-        const bool isSwitch = component.type() == ElectricalComponentType::LightSwitch;
-        const ImU32 stroke = preview ? IM_COL32(90, 186, 255, 160)
-                                   : isSwitch && closed ? IM_COL32(95, 225, 161, 255)
-                                                        : IM_COL32(148, 217, 255, 255);
-        const float angle = component.rotation() * (3.14159265f / 180.0f);
-        const float cs = std::cos(angle), sn = std::sin(angle);
-        const auto point = [&](float x, float y) {
-            return ImVec2(center.x + x * cs - y * sn,
-                          center.y + x * sn + y * cs);
-        };
-
-        const float halfLength = component.halfLengthPx();
-        constexpr float halfBox = 16.0f;
-        draw->AddLine(point(-halfLength, 0), point(-halfBox, 0), stroke, 2.2f);
-        draw->AddLine(point(halfBox, 0), point(halfLength, 0), stroke, 2.2f);
-        draw->AddCircleFilled(point(-halfLength, 0), 3.0f, stroke);
-        draw->AddCircleFilled(point(halfLength, 0), 3.0f, stroke);
-        draw->AddQuadFilled(point(-halfBox, -halfBox), point(halfBox, -halfBox),
-                            point(halfBox, halfBox), point(-halfBox, halfBox),
-                            IM_COL32(32, 48, 68, preview ? 145 : 255));
-        draw->AddQuad(point(-halfBox, -halfBox), point(halfBox, -halfBox),
-                      point(halfBox, halfBox), point(-halfBox, halfBox), stroke, 2.2f);
-
-        if (isSwitch)
-        {
-            const ImVec2 textSize = ImGui::CalcTextSize("S");
-            draw->AddText(ImVec2(center.x - textSize.x * 0.5f, center.y - textSize.y * 0.5f),
-                          stroke, "S");
-        }
-        else
-        {
-            // Lamp: a crossed square rather than the detailed crossed circle.
-            draw->AddLine(point(-9, -9), point(9, 9), stroke, 2.2f);
-            draw->AddLine(point(-9, 9), point(9, -9), stroke, 2.2f);
-        }
-
-        if (selected)
-        {
-            const float outline = halfLength + 8.0f;
-            draw->AddQuad(point(-outline, -24), point(outline, -24),
-                          point(outline, 24), point(-outline, 24),
-                          IM_COL32(88, 191, 255, 255), 2.0f);
-            if (resizeHandle)
-            {
-                const ImVec2 handle = point(halfLength + 9.0f, 0);
-                draw->AddRectFilled(ImVec2(handle.x - 6, handle.y - 6),
-                                    ImVec2(handle.x + 6, handle.y + 6),
-                                    IM_COL32(88, 191, 255, 255), 2.0f);
-            }
-        }
-
-        const std::string label = component.label().empty()
-            ? std::string(isSwitch ? "S" : "H") + std::to_string(component.id())
-            : component.label();
-        const ImVec2 labelSize = ImGui::CalcTextSize(label.c_str());
-        draw->AddText(ImVec2(center.x - labelSize.x * 0.5f, center.y + 21.0f),
-                      stroke, label.c_str());
-    }
-
-    void drawComponent(ImDrawList* draw, ImVec2 center,
-                       const ElectricalComponent& component, bool preview,
-                       bool selected = false, bool closed = false,
-                       bool resizeHandle = false, bool singleLine = false)
-    {
-        if (singleLine && (component.type() == ElectricalComponentType::LightSwitch ||
-                           component.type() == ElectricalComponentType::Lamp))
-            drawSingleLineDevice(draw, center, component, preview, selected, closed, resizeHandle);
-        else if (component.type() == ElectricalComponentType::LightSwitch)
-            drawLightSwitch(draw, center, component, preview, selected, closed, resizeHandle);
-        else if (component.type() == ElectricalComponentType::Lamp)
-            drawLamp(draw, center, component, preview, selected, resizeHandle);
-        else if (component.type() == ElectricalComponentType::SupplyInput)
-            drawSupplyInput(draw, center, component, preview, selected, resizeHandle);
-    }
 }
 
 EditorLayer::EditorLayer()
@@ -510,9 +266,9 @@ void EditorLayer::renderMenuBar()
         if (ImGui::MenuItem("Single-line", nullptr,
                             m_schematicView == SchematicView::SingleLine))
             m_schematicView = SchematicView::SingleLine;
-        if (ImGui::MenuItem("Detailed symbols", nullptr,
-                            m_schematicView == SchematicView::DetailedSymbols))
-            m_schematicView = SchematicView::DetailedSymbols;
+        if (ImGui::MenuItem("Multi-line (preview)", nullptr,
+                            m_schematicView == SchematicView::MultiLine))
+            m_schematicView = SchematicView::MultiLine;
         ImGui::EndMenu();
     }
     ImGui::EndMainMenuBar();
@@ -640,7 +396,7 @@ void EditorLayer::renderCanvas()
                                            : ImVec4(0.63f, 0.77f, 0.89f, 1.0f),
                            m_simulationMode ? "SIMULATION MODE" :
                            m_schematicView == SchematicView::SingleLine
-                               ? "SINGLE-LINE SCHEMATIC" : "DETAILED SYMBOLS");
+                               ? "SINGLE-LINE SCHEMATIC" : "MULTI-LINE SYMBOL PREVIEW");
         ImGui::SameLine();
         ImGui::TextDisabled(m_simulationMode ? "  Click a switch to toggle" :
                             m_wireTool ? "  Click start and end points  |  Grid: 20 px" :
@@ -1082,12 +838,12 @@ void EditorLayer::renderCanvas()
             }
 
             for (const ElectricalComponent& component : m_project.components)
-                drawComponent(draw, ImVec2(origin.x + component.x(),
-                                           origin.y + component.y()), component, false,
-                              m_selectedComponentId == component.id(),
-                              m_simulationMode && m_closedSwitches.contains(component.id()),
-                              !m_simulationMode && !m_placementTool,
-                              m_schematicView == SchematicView::SingleLine);
+                ComponentRenderer::draw(draw, ImVec2(origin.x + component.x(),
+                                                     origin.y + component.y()),
+                                        component, m_schematicView, false,
+                                        m_selectedComponentId == component.id(),
+                                        m_simulationMode && m_closedSwitches.contains(component.id()),
+                                        !m_simulationMode && !m_placementTool);
 
             if (hovered && !m_simulationMode && m_placementTool.has_value() &&
                 size.x >= 80.0f && size.y >= 80.0f)
@@ -1098,8 +854,8 @@ void EditorLayer::renderCanvas()
                 const float y = std::clamp(std::round((mouse.y - origin.y) / 20.0f) * 20.0f,
                                            30.0f, size.y - 30.0f);
                 const ElectricalComponent preview(m_project.nextComponentId, *m_placementTool, x, y);
-                drawComponent(draw, ImVec2(origin.x + x, origin.y + y), preview, true,
-                              false, false, m_schematicView == SchematicView::SingleLine);
+                ComponentRenderer::draw(draw, ImVec2(origin.x + x, origin.y + y),
+                                        preview, m_schematicView, true);
                 ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
                 if (clicked)
                 {

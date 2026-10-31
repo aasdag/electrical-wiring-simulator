@@ -2,6 +2,7 @@
 
 #include "Core/Layer.h"
 #include "FileHandler.h"
+#include "ComponentRenderer.h"
 
 #include <array>
 #include <cstddef>
@@ -24,7 +25,6 @@ public:
 private:
     enum class DialogMode { None, Open, Save };
     enum class PendingAction { None, New, Open, Exit };
-    enum class SchematicView { SingleLine, DetailedSymbols };
 
     struct WireCornerDrag
     {
