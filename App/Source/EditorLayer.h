@@ -46,6 +46,8 @@ private:
     std::string m_error;
     bool m_dirty = false;
     bool m_overwriteRequested = false;
+    bool m_openFileDialog = false;
+    bool m_openUnsavedDialog = false;
     DialogMode m_dialog = DialogMode::None;
     PendingAction m_pending = PendingAction::None;
 };

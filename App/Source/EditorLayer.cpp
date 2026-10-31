@@ -65,7 +65,7 @@ void EditorLayer::requestAction(PendingAction action)
     if (m_dirty)
     {
         m_pending = action;
-        ImGui::OpenPopup("Unsaved changes##ews");
+        m_openUnsavedDialog = true;
     }
     else performAction(action);
 }
@@ -195,7 +195,7 @@ void EditorLayer::showDialog(DialogMode mode)
                                                   : m_projectPath.filename().string()) : "");
     if (!m_projectPath.empty()) navigate(m_projectPath.parent_path());
     else refreshEntries();
-    ImGui::OpenPopup("Project explorer##ews");
+    m_openFileDialog = true;
 }
 
 void EditorLayer::saveProject(const fs::path& path)
@@ -204,9 +204,10 @@ void EditorLayer::saveProject(const fs::path& path)
     {
         m_projectPath = path;
         m_dirty = false;
+        const bool fromDialog = m_dialog != DialogMode::None;
         m_dialog = DialogMode::None;
         refreshEntries();
-        ImGui::CloseCurrentPopup();
+        if (fromDialog) ImGui::CloseCurrentPopup();
     }
 }
 
@@ -228,6 +229,11 @@ void EditorLayer::openProject(const fs::path& path)
 void EditorLayer::renderFileDialog()
 {
     if (m_dialog == DialogMode::None) return;
+    if (m_openFileDialog)
+    {
+        ImGui::OpenPopup("Project explorer##ews");
+        m_openFileDialog = false;
+    }
     ImGui::SetNextWindowSize(ImVec2(760, 530), ImGuiCond_Appearing);
     if (!ImGui::BeginPopupModal("Project explorer##ews", nullptr, ImGuiWindowFlags_NoCollapse)) return;
 
@@ -357,6 +363,11 @@ void EditorLayer::renderFileDialog()
 
 void EditorLayer::renderConfirmations()
 {
+    if (m_openUnsavedDialog)
+    {
+        ImGui::OpenPopup("Unsaved changes##ews");
+        m_openUnsavedDialog = false;
+    }
     if (ImGui::BeginPopupModal("Unsaved changes##ews", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
     {
         ImGui::TextWrapped("You have unsaved changes. Discard them and continue?");
