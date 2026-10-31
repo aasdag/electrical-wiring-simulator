@@ -100,6 +100,12 @@ void EditorLayer::onRender()
 
 void EditorLayer::onImGuiRender()
 {
+    // Cancel the active placement tool before drawing the toolbox/canvas.
+    // Never consume Escape for placement while a file dialog is open.
+    if (m_placementTool && m_dialog == DialogMode::None &&
+        (ImGui::IsKeyPressed(ImGuiKey_Escape) || ImGui::IsMouseClicked(ImGuiMouseButton_Right)))
+        m_placementTool.reset();
+
     renderMenuBar();
     renderToolbox();
     renderCanvas();
@@ -181,9 +187,6 @@ void EditorLayer::renderToolbox()
                      ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
                      ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoSavedSettings))
     {
-        if (m_dialog == DialogMode::None && ImGui::IsKeyPressed(ImGuiKey_Escape))
-            m_placementTool.reset();
-
         ImGui::TextDisabled("TOOLBOX");
         ImGui::SameLine(90.0f);
         const bool placing = m_placementTool.has_value();
@@ -196,7 +199,7 @@ void EditorLayer::renderToolbox()
         }
         ImGui::PopStyleColor();
         ImGui::SameLine();
-        ImGui::TextDisabled("%s", placing ? "Click on canvas to place  |  Esc to finish"
+        ImGui::TextDisabled("%s", placing ? "Click to place  |  Esc or right-click to cancel"
                                           : "Select a component to start placing");
         ImGui::SameLine();
         ImGui::TextDisabled("  %zu placed", m_project.components.size());
