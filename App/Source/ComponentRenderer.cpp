@@ -206,30 +206,36 @@ namespace
         (void)resizeHandle;
         if (isSwitch)
         {
-            // One connection at the switch ring; no in/out lead stubs.
+            // The single-line connection stem starts at the bottom of the ring.
             draw->AddCircle(center, 8.0f, stroke, 0, 2.2f);
             draw->AddLine(point(5, -7), point(21, -29), stroke, 2.4f);
             draw->AddLine(point(21, -29), point(29, -25), stroke, 2.4f);
+            draw->AddLine(point(0, 8), point(0, ElectricalComponent::gridSize),
+                          stroke, 2.2f);
         }
         else
         {
             // Lamp: free-standing X with one logical anchor at its center.
             draw->AddLine(point(-16, -16), point(16, 16), stroke, 2.4f);
             draw->AddLine(point(-16, 16), point(16, -16), stroke, 2.4f);
+            draw->AddLine(point(0, 0), point(0, ElectricalComponent::gridSize),
+                          stroke, 2.2f);
         }
+        // One visible, grid-aligned wire anchor for both incoming and outgoing wires.
+        draw->AddCircleFilled(point(0, ElectricalComponent::gridSize), 3.5f, stroke);
         if (selected)
         {
             const float right = isSwitch ? 34.0f : 24.0f;
             const float top = isSwitch ? -34.0f : -24.0f;
             draw->AddQuad(point(-24, top), point(right, top),
-                          point(right, 24), point(-24, 24),
+                          point(right, 27), point(-24, 27),
                           IM_COL32(88, 191, 255, 255), 2.0f);
         }
         const std::string label = component.label().empty()
             ? std::string(isSwitch ? "S" : "H") + std::to_string(component.id())
             : component.label();
         const ImVec2 labelSize = ImGui::CalcTextSize(label.c_str());
-        draw->AddText(ImVec2(center.x - labelSize.x * 0.5f, center.y + 22.0f),
+        draw->AddText(ImVec2(center.x - labelSize.x * 0.5f, center.y + 31.0f),
                       stroke, label.c_str());
     }
 
@@ -238,15 +244,23 @@ namespace
 ImVec2 ComponentRenderer::connectionPoint(const ElectricalComponent& component,
                                           int terminal, SchematicView view)
 {
-    // 0 is a shared logical anchor, not a physical/electrical connection.
-    // Existing +/- terminals also collapse visually to this point in SingleLine.
+    // The single-line lamp and switch share one visual anchor one grid step
+    // below the symbol; terminal 0 remains a logical, not electrical, contact.
+    // Rotate the stem with the symbol (multiples of 90 deg remain grid aligned).
     const float radians = component.rotation() * (3.14159265f / 180.0f);
+    const float cs = std::cos(radians), sn = std::sin(radians);
+    if (view == SchematicView::SingleLine &&
+        component.type() != ElectricalComponentType::SupplyInput)
+    {
+        const float offset = static_cast<float>(ElectricalComponent::gridSize);
+        return ImVec2(component.x() - offset * sn,
+                      component.y() + offset * cs);
+    }
     const float distance = component.type() == ElectricalComponentType::SupplyInput
         ? component.halfLengthPx()
-        : (view == SchematicView::SingleLine || terminal == 0)
-          ? 0.0f : terminal * component.halfLengthPx();
-    return ImVec2(component.x() + distance * std::cos(radians),
-                  component.y() + distance * std::sin(radians));
+        : terminal == 0 ? 0.0f : terminal * component.halfLengthPx();
+    return ImVec2(component.x() + distance * cs,
+                  component.y() + distance * sn);
 }
 
 void ComponentRenderer::draw(ImDrawList* draw, ImVec2 center,
