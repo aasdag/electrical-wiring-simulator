@@ -11,6 +11,7 @@ set(SOURCES
     Source/FileHandler.h
     Source/FileHandler.cpp
     Source/ElectricalComponent.h
+    Source/Wire.h
 )
 
 add_executable(ElectricalWiringSimulator)

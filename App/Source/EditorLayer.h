@@ -59,9 +59,13 @@ private:
     void performAction(PendingAction action);
     void selectComponent(const ElectricalComponent& component);
     void setSimulationMode(bool enabled);
+    void cancelWirePlacement();
 
     ProjectDocument m_project;
     std::optional<ElectricalComponentType> m_placementTool;
+    bool m_wireTool = false;
+    std::optional<WireEndpoint> m_wireStart;
+    std::optional<std::uint64_t> m_selectedWireId;
     std::optional<std::uint64_t> m_selectedComponentId;
     std::optional<ComponentDrag> m_componentDrag;
     std::optional<ComponentResize> m_componentResize;

@@ -17,12 +17,14 @@
 namespace
 {
     constexpr std::size_t maxComponents = 1000;
-    constexpr std::uintmax_t maxProjectSize = 256 * 1024;
+    constexpr std::size_t maxWires = 1000;
+    constexpr std::uintmax_t maxProjectSize = 512 * 1024;
 
     bool valid(const ProjectDocument& project)
     {
         if (project.name.empty() || project.name.size() > 127 ||
-            project.notes.size() > 2047 || project.components.size() > maxComponents)
+            project.notes.size() > 2047 || project.components.size() > maxComponents ||
+            project.wires.size() > maxWires)
             return false;
 
         std::unordered_set<std::uint64_t> ids;
@@ -38,6 +40,35 @@ namespace
                 (component.rotation() != 0 && component.rotation() != 90 &&
                  component.rotation() != 180 && component.rotation() != 270) ||
                 !ids.insert(component.id()).second)
+                return false;
+        }
+        std::unordered_set<std::uint64_t> wireIds;
+        const auto validEndpoint = [&](const WireEndpoint& endpoint) {
+            if (!std::isfinite(endpoint.x) || !std::isfinite(endpoint.y) ||
+                endpoint.x < 0.0f || endpoint.y < 0.0f ||
+                endpoint.x > 1000000.0f || endpoint.y > 1000000.0f)
+                return false;
+            if (endpoint.componentId == 0)
+                return endpoint.terminal == 0;
+            if (endpoint.terminal != -1 && endpoint.terminal != 1)
+                return false;
+            return std::any_of(project.components.begin(), project.components.end(),
+                [&](const ElectricalComponent& c) { return c.id() == endpoint.componentId; });
+        };
+        for (const Wire& wire : project.wires)
+        {
+            if (wire.id() == 0 || wire.id() == std::numeric_limits<std::uint64_t>::max() ||
+                wire.conductors() < Wire::minConductors ||
+                wire.conductors() > Wire::maxConductors ||
+                !validEndpoint(wire.start()) || !validEndpoint(wire.end()) ||
+                !wireIds.insert(wire.id()).second)
+                return false;
+            // A wire must connect two different points or terminals.
+            const auto& a = wire.start();
+            const auto& b = wire.end();
+            if (a.componentId && a.componentId == b.componentId && a.terminal == b.terminal)
+                return false;
+            if (!a.componentId && !b.componentId && a.x == b.x && a.y == b.y)
                 return false;
         }
         return true;
@@ -63,7 +94,7 @@ bool FileHandler::save(const std::filesystem::path& path, const ProjectDocument&
             return false;
         }
 
-        stream << "EWS_PROJECT 4\n" << std::quoted(project.name) << '\n'
+        stream << "EWS_PROJECT 5\n" << std::quoted(project.name) << '\n'
                << std::quoted(project.notes) << '\n'
                << project.components.size() << '\n'
                << std::setprecision(std::numeric_limits<float>::max_digits10);
@@ -73,6 +104,15 @@ bool FileHandler::save(const std::filesystem::path& path, const ProjectDocument&
                    << component.x() << ' ' << component.y() << ' '
                    << component.rotation() << ' ' << std::quoted(component.label()) << ' '
                    << component.lengthCells() << '\n';
+        }
+        stream << project.wires.size() << '\n';
+        for (const Wire& wire : project.wires)
+        {
+            const auto& a = wire.start();
+            const auto& b = wire.end();
+            stream << wire.id() << ' ' << wire.conductors() << ' '
+                   << a.x << ' ' << a.y << ' ' << a.componentId << ' ' << a.terminal << ' '
+                   << b.x << ' ' << b.y << ' ' << b.componentId << ' ' << b.terminal << '\n';
         }
         stream.flush();
         if (!stream)
@@ -126,7 +166,8 @@ bool FileHandler::load(const std::filesystem::path& path, ProjectDocument& proje
     ProjectDocument parsed;
     if (!stream || !std::getline(stream, magic) ||
         (magic != "EWS_PROJECT 1" && magic != "EWS_PROJECT 2" &&
-         magic != "EWS_PROJECT 3" && magic != "EWS_PROJECT 4"))
+         magic != "EWS_PROJECT 3" && magic != "EWS_PROJECT 4" &&
+         magic != "EWS_PROJECT 5"))
     {
         error = "Not a supported EWS project.";
         return false;
@@ -139,7 +180,7 @@ bool FileHandler::load(const std::filesystem::path& path, ProjectDocument& proje
     }
 
     if (magic == "EWS_PROJECT 2" || magic == "EWS_PROJECT 3" ||
-        magic == "EWS_PROJECT 4")
+        magic == "EWS_PROJECT 4" || magic == "EWS_PROJECT 5")
     {
         std::size_t count = 0;
         if (!(stream >> count) || count > maxComponents)
@@ -161,14 +202,14 @@ bool FileHandler::load(const std::filesystem::path& path, ProjectDocument& proje
 
             int rotation = 0;
             std::string label;
-            if ((magic == "EWS_PROJECT 3" || magic == "EWS_PROJECT 4") &&
+            if ((magic == "EWS_PROJECT 3" || magic == "EWS_PROJECT 4" || magic == "EWS_PROJECT 5") &&
                 !(stream >> rotation >> std::quoted(label)))
             {
                 error = "Invalid component properties.";
                 return false;
             }
             int lengthCells = ElectricalComponent::defaultLengthCells;
-            if (magic == "EWS_PROJECT 4" && !(stream >> lengthCells))
+            if ((magic == "EWS_PROJECT 4" || magic == "EWS_PROJECT 5") && !(stream >> lengthCells))
             {
                 error = "Invalid component length.";
                 return false;
@@ -177,6 +218,32 @@ bool FileHandler::load(const std::filesystem::path& path, ProjectDocument& proje
                                            x, y, std::move(label), rotation, lengthCells);
             if (id < std::numeric_limits<std::uint64_t>::max())
                 parsed.nextComponentId = std::max(parsed.nextComponentId, id + 1);
+        }
+    }
+
+    if (magic == "EWS_PROJECT 5")
+    {
+        std::size_t count = 0;
+        if (!(stream >> count) || count > maxWires)
+        {
+            error = "Invalid number of wires.";
+            return false;
+        }
+        for (std::size_t i = 0; i < count; ++i)
+        {
+            std::uint64_t id = 0;
+            int conductors = 0;
+            WireEndpoint start, end;
+            if (!(stream >> id >> conductors
+                         >> start.x >> start.y >> start.componentId >> start.terminal
+                         >> end.x >> end.y >> end.componentId >> end.terminal))
+            {
+                error = "Invalid wire data.";
+                return false;
+            }
+            parsed.wires.emplace_back(id, start, end, conductors);
+            if (id < std::numeric_limits<std::uint64_t>::max())
+                parsed.nextWireId = std::max(parsed.nextWireId, id + 1);
         }
     }
 

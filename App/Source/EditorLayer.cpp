@@ -58,6 +58,34 @@ namespace
         }
     }
 
+    ImVec2 resolveWireEndpoint(const ProjectDocument& project, const WireEndpoint& endpoint)
+    {
+        if (endpoint.componentId != 0)
+        {
+            const auto it = std::find_if(project.components.begin(), project.components.end(),
+                [&](const ElectricalComponent& c) { return c.id() == endpoint.componentId; });
+            if (it != project.components.end())
+            {
+                const float radians = it->rotation() * (3.14159265f / 180.0f);
+                const float distance = endpoint.terminal * it->halfLengthPx();
+                return ImVec2(it->x() + distance * std::cos(radians),
+                              it->y() + distance * std::sin(radians));
+            }
+        }
+        return ImVec2(endpoint.x, endpoint.y);
+    }
+
+    float pointSegmentDistanceSquared(ImVec2 p, ImVec2 a, ImVec2 b)
+    {
+        const float dx = b.x - a.x, dy = b.y - a.y;
+        const float lenSq = dx * dx + dy * dy;
+        const float t = lenSq > 0.0f
+            ? std::clamp(((p.x - a.x) * dx + (p.y - a.y) * dy) / lenSq, 0.0f, 1.0f)
+            : 0.0f;
+        const float ex = p.x - (a.x + t * dx), ey = p.y - (a.y + t * dy);
+        return ex * ex + ey * ey;
+    }
+
     // A single-pole light-switch symbol in canvas coordinates, rotated around its center.
     void drawLightSwitch(ImDrawList* draw, ImVec2 center,
                          const ElectricalComponent& component, bool preview, bool selected = false,
@@ -146,6 +174,7 @@ void EditorLayer::onImGuiRender()
         if (m_componentResize) cancelComponentResize();
         else if (m_componentDrag) cancelComponentDrag();
         else if (m_simulationMode) setSimulationMode(false);
+        else if (m_wireTool) cancelWirePlacement();
         else if (m_placementTool) m_placementTool.reset();
         else if (ImGui::IsKeyPressed(ImGuiKey_Escape)) m_selectedComponentId.reset();
     }
@@ -173,6 +202,7 @@ void EditorLayer::performAction(PendingAction action)
 {
     cancelComponentDrag();
     cancelComponentResize();
+    cancelWirePlacement();
     m_pending = PendingAction::None;
     switch (action)
     {
@@ -243,9 +273,26 @@ void EditorLayer::renderToolbox()
         if (ImGui::Button("Light switch", ImVec2(146, 34)))
         {
             if (placing) m_placementTool.reset();
-            else m_placementTool = ElectricalComponentType::LightSwitch;
+            else
+            {
+                cancelWirePlacement();
+                m_placementTool = ElectricalComponentType::LightSwitch;
+                m_selectedWireId.reset();
+            }
         }
         ImGui::PopStyleColor();
+        ImGui::SameLine();
+        if (ImGui::Button(m_wireTool ? "Wire [active]" : "Wire", ImVec2(112, 34)))
+        {
+            if (m_wireTool) cancelWirePlacement();
+            else
+            {
+                m_placementTool.reset();
+                m_wireTool = true;
+                m_selectedComponentId.reset();
+                m_selectedWireId.reset();
+            }
+        }
         ImGui::EndDisabled();
         ImGui::SameLine();
         ImGui::PushStyleColor(ImGuiCol_Button, m_simulationMode
@@ -256,8 +303,10 @@ void EditorLayer::renderToolbox()
         ImGui::SameLine();
         ImGui::TextDisabled("%s", m_simulationMode
             ? "Click a switch to toggle  |  Esc / right-click to stop"
+            : m_wireTool ? (m_wireStart ? "Click end point  |  Esc to cancel"
+                                      : "Click start point  |  Esc to cancel")
             : placing ? "Click to place  |  Esc / right-click to cancel"
-                      : "Select a component to place");
+                      : "Select a tool to begin");
     }
     ImGui::End();
     ImGui::PopStyleVar();
@@ -269,7 +318,7 @@ void EditorLayer::renderCanvas()
     const ImGuiViewport* viewport = ImGui::GetMainViewport();
     const float top = viewport->Pos.y + ImGui::GetFrameHeight() + 74.0f;
     const float left = viewport->Pos.x + 314.0f;
-    const float rightPanelWidth = m_selectedComponentId ? 314.0f : 0.0f;
+    const float rightPanelWidth = (m_selectedComponentId || m_selectedWireId) ? 314.0f : 0.0f;
     const float width = std::max(110.0f, viewport->Size.x - 326.0f - rightPanelWidth);
     const float height = std::max(110.0f, viewport->Size.y - (top - viewport->Pos.y) - 12.0f);
     ImGui::SetNextWindowPos(ImVec2(left, top), ImGuiCond_Always);
@@ -285,7 +334,8 @@ void EditorLayer::renderCanvas()
                            m_simulationMode ? "SIMULATION MODE" : "DESIGN CANVAS");
         ImGui::SameLine();
         ImGui::TextDisabled(m_simulationMode ? "  Click a switch to toggle" :
-                            "  Grid: 20 px  |  Drag a component to move");
+                            m_wireTool ? "  Click start and end points  |  Grid: 20 px" :
+                                         "  Grid: 20 px  |  Drag a component to move");
         ImGui::Separator();
 
         const ImVec2 size = ImGui::GetContentRegionAvail();
@@ -305,9 +355,87 @@ void EditorLayer::renderCanvas()
                 draw->AddLine(ImVec2(origin.x, origin.y + y),
                               ImVec2(end.x, origin.y + y), IM_COL32(57, 70, 88, 120));
 
+            // Draw wire connections first so component symbols remain on top.
+            for (const Wire& wire : m_project.wires)
+            {
+                const ImVec2 a = resolveWireEndpoint(m_project, wire.start());
+                const ImVec2 b = resolveWireEndpoint(m_project, wire.end());
+                const ImVec2 p1(origin.x + a.x, origin.y + a.y);
+                const ImVec2 p2(origin.x + b.x, origin.y + b.y);
+                const bool selected = m_selectedWireId == wire.id();
+                const ImU32 color = selected ? IM_COL32(104, 216, 255, 255)
+                                             : IM_COL32(223, 177, 103, 255);
+                draw->AddLine(p1, p2, color, selected ? 3.5f : 2.4f);
+                draw->AddCircleFilled(p1, selected ? 4.2f : 3.0f, color);
+                draw->AddCircleFilled(p2, selected ? 4.2f : 3.0f, color);
+            }
+
+            // Prefer nearby switch terminals; other endpoints snap to the grid.
+            const auto snapEndpoint = [&](ImVec2 mouse) {
+                const float grid = static_cast<float>(ElectricalComponent::gridSize);
+                WireEndpoint result;
+                result.x = std::clamp(std::round((mouse.x - origin.x) / grid) * grid,
+                                      0.0f, std::floor(size.x / grid) * grid);
+                result.y = std::clamp(std::round((mouse.y - origin.y) / grid) * grid,
+                                      0.0f, std::floor(size.y / grid) * grid);
+                float closestSq = 12.0f * 12.0f;
+                for (const ElectricalComponent& component : m_project.components)
+                {
+                    for (const int side : {-1, 1})
+                    {
+                        const WireEndpoint candidate{component.x(), component.y(), component.id(), side};
+                        const ImVec2 terminal = resolveWireEndpoint(m_project, candidate);
+                        const float dx = mouse.x - origin.x - terminal.x;
+                        const float dy = mouse.y - origin.y - terminal.y;
+                        const float distSq = dx * dx + dy * dy;
+                        if (distSq < closestSq)
+                        {
+                            closestSq = distSq;
+                            result.x = terminal.x;
+                            result.y = terminal.y;
+                            result.componentId = component.id();
+                            result.terminal = side;
+                        }
+                    }
+                }
+                return result;
+            };
+
+            if (m_wireTool && !m_simulationMode && m_dialog == DialogMode::None && hovered)
+            {
+                const WireEndpoint endpoint = snapEndpoint(ImGui::GetMousePos());
+                const ImVec2 pos(origin.x + endpoint.x, origin.y + endpoint.y);
+                draw->AddCircleFilled(pos, 5.0f, IM_COL32(105, 230, 172, 255));
+                if (m_wireStart)
+                {
+                    const ImVec2 a = resolveWireEndpoint(m_project, *m_wireStart);
+                    draw->AddLine(ImVec2(origin.x + a.x, origin.y + a.y), pos,
+                                  IM_COL32(105, 230, 172, 190), 2.0f);
+                }
+                ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+                if (clicked)
+                {
+                    if (!m_wireStart)
+                        m_wireStart = endpoint;
+                    else
+                    {
+                        const ImVec2 a = resolveWireEndpoint(m_project, *m_wireStart);
+                        const ImVec2 b = resolveWireEndpoint(m_project, endpoint);
+                        if (pointSegmentDistanceSquared(a, b, b) > 0.25f)
+                        {
+                            m_project.addWire(*m_wireStart, endpoint);
+                            m_selectedWireId = m_project.wires.back().id();
+                            m_selectedComponentId.reset();
+                            m_dirty = true;
+                        }
+                        m_wireStart.reset();
+                    }
+                }
+            }
+
             // The square at the positive terminal resizes symmetrically in grid steps.
             bool resizeStarted = false;
-            if (!m_simulationMode && !m_placementTool && m_dialog == DialogMode::None &&
+            if (!m_simulationMode && !m_wireTool && !m_placementTool && m_dialog == DialogMode::None &&
                 hovered && m_selectedComponentId &&
                 ImGui::IsMouseClicked(ImGuiMouseButton_Left))
             {
@@ -367,12 +495,13 @@ void EditorLayer::renderCanvas()
             }
 
             // Select on mouse-down in edit mode; simulation continues to toggle on click.
-            if (!resizeStarted && !m_componentResize && !m_placementTool &&
+            if (!resizeStarted && !m_componentResize && !m_wireTool && !m_placementTool &&
                 m_dialog == DialogMode::None &&
                 ((m_simulationMode && clicked) ||
                  (!m_simulationMode && hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left))))
             {
                 m_selectedComponentId.reset();
+                m_selectedWireId.reset();
                 const ImVec2 mouse = ImGui::GetMousePos();
                 for (auto it = m_project.components.rbegin(); it != m_project.components.rend(); ++it)
                 {
@@ -442,6 +571,25 @@ void EditorLayer::renderCanvas()
                 }
             }
 
+            // When no component was hit, allow selecting a line near the cursor.
+            if (!m_simulationMode && !m_wireTool && !m_placementTool &&
+                m_dialog == DialogMode::None && hovered &&
+                ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !m_selectedComponentId)
+            {
+                const ImVec2 mouse = ImGui::GetMousePos();
+                const ImVec2 local(mouse.x - origin.x, mouse.y - origin.y);
+                for (auto it = m_project.wires.rbegin(); it != m_project.wires.rend(); ++it)
+                {
+                    if (pointSegmentDistanceSquared(local,
+                            resolveWireEndpoint(m_project, it->start()),
+                            resolveWireEndpoint(m_project, it->end())) <= 9.0f * 9.0f)
+                    {
+                        m_selectedWireId = it->id();
+                        break;
+                    }
+                }
+            }
+
             for (const ElectricalComponent& component : m_project.components)
             {
                 if (component.type() == ElectricalComponentType::LightSwitch)
@@ -507,8 +655,16 @@ void EditorLayer::cancelComponentDrag()
     m_componentDrag.reset();
 }
 
+void EditorLayer::cancelWirePlacement()
+{
+    m_wireStart.reset();
+    m_wireTool = false;
+}
+
 void EditorLayer::setSimulationMode(bool enabled)
 {
+    cancelWirePlacement();
+    m_selectedWireId.reset();
     cancelComponentDrag();
     cancelComponentResize();
     m_simulationMode = enabled;
@@ -525,7 +681,51 @@ void EditorLayer::selectComponent(const ElectricalComponent& component)
 
 void EditorLayer::renderPropertiesPanel()
 {
-    if (!m_selectedComponentId) return;
+    if (!m_selectedComponentId && !m_selectedWireId) return;
+    if (m_selectedWireId)
+    {
+        const auto it = std::find_if(m_project.wires.begin(), m_project.wires.end(),
+            [&](const Wire& wire) { return wire.id() == *m_selectedWireId; });
+        if (it == m_project.wires.end())
+        {
+            m_selectedWireId.reset();
+            return;
+        }
+
+        const ImGuiViewport* viewport = ImGui::GetMainViewport();
+        const float top = viewport->Pos.y + ImGui::GetFrameHeight() + 74.0f;
+        ImGui::SetNextWindowPos(ImVec2(viewport->Pos.x + viewport->Size.x - 302.0f, top), ImGuiCond_Always);
+        ImGui::SetNextWindowSize(ImVec2(290.0f, std::max(240.0f,
+            viewport->Size.y - (top - viewport->Pos.y) - 12.0f)), ImGuiCond_Always);
+        ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.085f, 0.12f, 0.17f, 1.0f));
+        if (ImGui::Begin("Properties##wire", nullptr,
+                         ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize |
+                         ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings))
+        {
+            ImGui::TextColored(ImVec4(0.46f, 0.73f, 1.0f, 1.0f), "WIRE PROPERTIES");
+            ImGui::Separator();
+            ImGui::TextDisabled("ID: %llu", static_cast<unsigned long long>(it->id()));
+            ImGui::BeginDisabled(m_simulationMode);
+            int conductors = it->conductors();
+            if (ImGui::InputInt("Conductors", &conductors))
+            {
+                it->setConductors(std::clamp(conductors, Wire::minConductors, Wire::maxConductors));
+                m_dirty = true;
+            }
+            ImGui::EndDisabled();
+            ImGui::TextDisabled("1 to 32 conductors. Metadata only for now.");
+            const ImVec2 a = resolveWireEndpoint(m_project, it->start());
+            const ImVec2 b = resolveWireEndpoint(m_project, it->end());
+            ImGui::Separator();
+            ImGui::TextDisabled("Start: (%.0f, %.0f)", a.x, a.y);
+            ImGui::TextDisabled("End:   (%.0f, %.0f)", b.x, b.y);
+            if (ImGui::Button("Deselect")) m_selectedWireId.reset();
+        }
+        ImGui::End();
+        ImGui::PopStyleColor();
+        return;
+    }
+
     const auto it = std::find_if(m_project.components.begin(), m_project.components.end(),
         [&](const ElectricalComponent& component) { return component.id() == *m_selectedComponentId; });
     if (it == m_project.components.end())
@@ -640,6 +840,7 @@ void EditorLayer::renderWorkspace()
     }
     ImGui::EndDisabled();
     ImGui::TextDisabled("Components: %zu", m_project.components.size());
+    ImGui::TextDisabled("Wires: %zu", m_project.wires.size());
     ImGui::TextDisabled("File: %s", m_projectPath.empty() ? "Not saved" : m_projectPath.string().c_str());
     if (ImGui::Button("Open project...")) requestAction(PendingAction::Open);
     ImGui::SameLine();
@@ -687,6 +888,7 @@ void EditorLayer::navigate(const fs::path& path)
 
 void EditorLayer::showDialog(DialogMode mode)
 {
+    cancelWirePlacement();
     cancelComponentDrag();
     cancelComponentResize();
     m_dialog = mode;
@@ -716,6 +918,7 @@ void EditorLayer::saveProject(const fs::path& path)
 
 void EditorLayer::openProject(const fs::path& path)
 {
+    cancelWirePlacement();
     cancelComponentDrag();
     cancelComponentResize();
     ProjectDocument loaded;
