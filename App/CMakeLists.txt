@@ -6,10 +6,14 @@ set(SOURCES
     Source/Main.cpp
     Source/EditorLayer.h
     Source/EditorLayer.cpp
+    Source/ComponentRenderer.h
+    Source/ComponentRenderer.cpp
     Source/TestLayer.h
     Source/TestLayer.cpp
     Source/FileHandler.h
     Source/FileHandler.cpp
+    Source/ElectricalComponent.h
+    Source/Wire.h
 )
 
 add_executable(ElectricalWiringSimulator)

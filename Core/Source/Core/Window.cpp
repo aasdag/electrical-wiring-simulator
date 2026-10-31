@@ -28,6 +28,9 @@ namespace Core
         SetConfigFlags(flag);
 
         InitWindow(m_specification.width, m_specification.height, m_specification.title.c_str());
+
+        // Escape cancels editor tools; closing the app is an explicit user action.
+        SetExitKey(KEY_NULL);
     }
 
     void Window::destroy()
