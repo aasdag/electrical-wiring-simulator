@@ -263,6 +263,68 @@ namespace
                       stroke, label.c_str());
     }
 
+    void drawSupplyInput(ImDrawList* draw, ImVec2 center,
+                         const ElectricalComponent& component, bool preview,
+                         bool selected = false, bool resizeHandle = false)
+    {
+        const ImU32 stroke = preview ? IM_COL32(90, 186, 255, 160)
+                                     : IM_COL32(148, 217, 255, 255);
+        const float angle = component.rotation() * (3.14159265f / 180.0f);
+        const float cs = std::cos(angle), sn = std::sin(angle);
+        const auto point = [&](float x, float y) {
+            return ImVec2(center.x + x * cs - y * sn,
+                          center.y + x * sn + y * cs);
+        };
+
+        const float grid = static_cast<float>(ElectricalComponent::gridSize);
+        const float halfLength = component.halfLengthPx();
+        const ImVec2 topLeft = point(-2.0f * grid, -grid);
+        const ImVec2 topRight = point(0.0f, -grid);
+        const ImVec2 bottomRight = point(0.0f, grid);
+        const ImVec2 bottomLeft = point(-2.0f * grid, grid);
+        draw->AddQuadFilled(topLeft, topRight, bottomRight, bottomLeft,
+                            IM_COL32(32, 48, 68, preview ? 145 : 255));
+        draw->AddQuad(topLeft, topRight, bottomRight, bottomLeft, stroke, 2.2f);
+        draw->AddLine(point(0.0f, 0.0f), point(halfLength, 0.0f), stroke, 2.2f);
+        draw->AddCircleFilled(point(halfLength, 0.0f), 3.0f, stroke);
+
+        const ImVec2 labelCenter = point(-grid, 0.0f);
+        const ImVec2 labelSize = ImGui::CalcTextSize("IN");
+        draw->AddText(ImVec2(labelCenter.x - labelSize.x * 0.5f,
+                             labelCenter.y - labelSize.y * 0.5f), stroke, "IN");
+        const auto& settings = component.supplySettings();
+        if (settings.showDescription)
+        {
+            const char* systems[] = { "IT", "TN", "TT", "DC" };
+            const std::string details = std::to_string(settings.voltage) + " V " +
+                systems[static_cast<int>(settings.system) - 1];
+            const ImVec2 textSize = ImGui::CalcTextSize(details.c_str());
+            draw->AddText(ImVec2(center.x - textSize.x * 0.5f, center.y + 26.0f),
+                          stroke, details.c_str());
+        }
+        const std::string name = component.label().empty()
+            ? "IN" + std::to_string(component.id()) : component.label();
+        const ImVec2 nameSize = ImGui::CalcTextSize(name.c_str());
+        draw->AddText(ImVec2(center.x - nameSize.x * 0.5f, center.y - 39.0f),
+                      stroke, name.c_str());
+
+        if (selected)
+        {
+            draw->AddQuad(point(-2.0f * grid - 8.0f, -grid - 8.0f),
+                          point(halfLength + 8.0f, -grid - 8.0f),
+                          point(halfLength + 8.0f, grid + 8.0f),
+                          point(-2.0f * grid - 8.0f, grid + 8.0f),
+                          IM_COL32(88, 191, 255, 255), 2.0f);
+            if (resizeHandle)
+            {
+                const ImVec2 handle = point(halfLength + 9.0f, 0.0f);
+                draw->AddRectFilled(ImVec2(handle.x - 6.0f, handle.y - 6.0f),
+                                    ImVec2(handle.x + 6.0f, handle.y + 6.0f),
+                                    IM_COL32(88, 191, 255, 255), 2.0f);
+            }
+        }
+    }
+
     void drawComponent(ImDrawList* draw, ImVec2 center,
                        const ElectricalComponent& component, bool preview,
                        bool selected = false, bool closed = false,
@@ -272,6 +334,8 @@ namespace
             drawLightSwitch(draw, center, component, preview, selected, closed, resizeHandle);
         else if (component.type() == ElectricalComponentType::Lamp)
             drawLamp(draw, center, component, preview, selected, resizeHandle);
+        else if (component.type() == ElectricalComponentType::SupplyInput)
+            drawSupplyInput(draw, center, component, preview, selected, resizeHandle);
     }
 }
 
@@ -433,6 +497,19 @@ void EditorLayer::renderToolbox()
             }
         }
         ImGui::SameLine();
+        if (ImGui::Button("IN", ImVec2(70, 34)))
+        {
+            if (m_placementTool == ElectricalComponentType::SupplyInput)
+                m_placementTool.reset();
+            else
+            {
+                cancelWirePlacement();
+                m_placementTool = ElectricalComponentType::SupplyInput;
+                m_selectedWireId.reset();
+                m_selectedWireCornerIndex.reset();
+            }
+        }
+        ImGui::SameLine();
         if (ImGui::Button(m_wireTool ? "Wire [active]" : "Wire", ImVec2(112, 34)))
         {
             if (m_wireTool) cancelWirePlacement();
@@ -548,6 +625,8 @@ void EditorLayer::renderCanvas()
                 {
                     for (const int side : {-1, 1})
                     {
+                        if (component.type() == ElectricalComponentType::SupplyInput && side == -1)
+                            continue;
                         const WireEndpoint candidate{component.x(), component.y(), component.id(), side};
                         const ImVec2 terminal = resolveWireEndpoint(m_project, candidate);
                         const float dx = mouse.x - origin.x - terminal.x;
@@ -829,7 +908,10 @@ void EditorLayer::renderCanvas()
                     const float cs = std::cos(radians), sn = std::sin(radians);
                     const float localX = dx * cs + dy * sn;
                     const float localY = -dx * sn + dy * cs;
-                    if (std::abs(localX) <= it->halfLengthPx() + 8.0f &&
+                    const float leftBound = it->type() == ElectricalComponentType::SupplyInput
+                        ? -2.0f * ElectricalComponent::gridSize - 8.0f
+                        : -it->halfLengthPx() - 8.0f;
+                    if (localX >= leftBound && localX <= it->halfLengthPx() + 8.0f &&
                         std::abs(localY) <= 24.0f)
                     {
                         selectComponent(*it);
@@ -1154,8 +1236,9 @@ void EditorLayer::renderPropertiesPanel()
     {
         ImGui::TextColored(ImVec4(0.46f, 0.73f, 1.0f, 1.0f), "COMPONENT PROPERTIES");
         ImGui::Separator();
-        ImGui::TextUnformatted(component.type() == ElectricalComponentType::Lamp
-                                 ? "Lamp" : "Light switch");
+        ImGui::TextUnformatted(component.type() == ElectricalComponentType::SupplyInput
+            ? "Supply input (IN)" : component.type() == ElectricalComponentType::Lamp
+            ? "Lamp" : "Light switch");
         ImGui::TextDisabled("ID: %llu", static_cast<unsigned long long>(component.id()));
         ImGui::Spacing();
         if (m_simulationMode)
@@ -1169,7 +1252,9 @@ void EditorLayer::renderPropertiesPanel()
                 ImGui::TextDisabled("Click the switch to change its state.");
             }
             else
-                ImGui::TextDisabled("Lamp power simulation is not implemented yet.");
+                ImGui::TextDisabled(component.type() == ElectricalComponentType::SupplyInput
+                    ? "Source simulation is not implemented yet."
+                    : "Lamp power simulation is not implemented yet.");
             ImGui::Separator();
         }
 
@@ -1206,8 +1291,10 @@ void EditorLayer::renderPropertiesPanel()
         }
         if (component.type() == ElectricalComponentType::LightSwitch)
             ImGui::TextDisabled("Inner contacts: fixed 2-cell spacing.");
-        else
+        else if (component.type() == ElectricalComponentType::Lamp)
             ImGui::TextDisabled("Lamp symbol: fixed 2-cell diameter.");
+        else
+            ImGui::TextDisabled("IN block: fixed 2-cell width; one output terminal.");
         ImGui::TextDisabled("Terminal span adjusts wire leads only.");
 
         const char* rotations[] = { "0 deg", "90 deg", "180 deg", "270 deg" };
@@ -1218,11 +1305,58 @@ void EditorLayer::renderPropertiesPanel()
             m_dirty = true;
         }
 
+        if (component.type() == ElectricalComponentType::SupplyInput)
+        {
+            ImGui::SeparatorText("Supply configuration");
+            auto settings = component.supplySettings();
+            const char* systems[] = { "IT", "TN", "TT", "DC" };
+            int system = static_cast<int>(settings.system) - 1;
+            if (ImGui::Combo("System", &system, systems, 4))
+            {
+                const bool dc = system == 3;
+                settings.system = static_cast<SupplySystem>(system + 1);
+                if (dc)
+                {
+                    settings.frequency = 0;
+                    settings.phases = 1;
+                    settings.neutral = false;
+                }
+                else if (settings.frequency == 0)
+                    settings.frequency = 50;
+            }
+            int voltage = settings.voltage;
+            if (ImGui::InputInt("Voltage (V)", &voltage))
+                settings.voltage = std::clamp(voltage, 1, 1000);
+            if (settings.system != SupplySystem::DC)
+            {
+                int frequency = settings.frequency;
+                if (ImGui::InputInt("Frequency (Hz)", &frequency))
+                    settings.frequency = std::clamp(frequency, 1, 400);
+                const char* phaseOptions[] = { "1 phase", "3 phases" };
+                int phaseIndex = settings.phases == 3 ? 1 : 0;
+                if (ImGui::Combo("Phases", &phaseIndex, phaseOptions, 2))
+                    settings.phases = phaseIndex == 1 ? 3 : 1;
+                ImGui::Checkbox("Neutral (N)", &settings.neutral);
+            }
+            else
+                ImGui::TextDisabled("DC supply (+ / -); no phase or frequency.");
+            ImGui::Checkbox("Protective earth (PE)", &settings.protectiveEarth);
+            ImGui::Checkbox("Show description", &settings.showDescription);
+            if (settings != component.supplySettings() && validSupplySettings(settings))
+            {
+                component.setSupplySettings(settings);
+                m_dirty = true;
+            }
+            ImGui::TextWrapped("One connection in single-line view. Individual conductors will be represented in a future multi-line view.");
+        }
+
         ImGui::EndDisabled();
         ImGui::Spacing();
         ImGui::Separator();
         ImGui::TextDisabled("%s", m_simulationMode
-            ? (component.type() == ElectricalComponentType::Lamp
+            ? (component.type() == ElectricalComponentType::SupplyInput
+                ? "Source state requires circuit simulation."
+                : component.type() == ElectricalComponentType::Lamp
                 ? "Lamp state requires circuit simulation." : "Switch state is not saved.")
             : "Changes are saved with the project.");
         if (ImGui::Button("Deselect")) m_selectedComponentId.reset();

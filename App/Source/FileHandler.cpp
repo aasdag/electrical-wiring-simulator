@@ -31,13 +31,16 @@ namespace
         for (const ElectricalComponent& component : project.components)
         {
             if ((component.type() != ElectricalComponentType::LightSwitch &&
-             component.type() != ElectricalComponentType::Lamp) ||
+             component.type() != ElectricalComponentType::Lamp &&
+             component.type() != ElectricalComponentType::SupplyInput) ||
                 component.id() == 0 || component.id() == std::numeric_limits<std::uint64_t>::max() ||
                 !std::isfinite(component.x()) || !std::isfinite(component.y()) ||
                 component.x() < 0 || component.y() < 0 ||
                 component.x() > 1000000 || component.y() > 1000000 ||
                 component.label().size() > 63 ||
                 !ElectricalComponent::validLength(component.lengthCells()) ||
+                (component.type() == ElectricalComponentType::SupplyInput &&
+                 !validSupplySettings(component.supplySettings())) ||
                 (component.rotation() != 0 && component.rotation() != 90 &&
                  component.rotation() != 180 && component.rotation() != 270) ||
                 !ids.insert(component.id()).second)
@@ -54,7 +57,10 @@ namespace
             if (endpoint.terminal != -1 && endpoint.terminal != 1)
                 return false;
             return std::any_of(project.components.begin(), project.components.end(),
-                [&](const ElectricalComponent& c) { return c.id() == endpoint.componentId; });
+                [&](const ElectricalComponent& c) {
+                    return c.id() == endpoint.componentId &&
+                           (c.type() != ElectricalComponentType::SupplyInput || endpoint.terminal == 1);
+                });
         };
         for (const Wire& wire : project.wires)
         {
@@ -101,7 +107,7 @@ bool FileHandler::save(const std::filesystem::path& path, const ProjectDocument&
             return false;
         }
 
-        stream << "EWS_PROJECT 6\n" << std::quoted(project.name) << '\n'
+        stream << "EWS_PROJECT 7\n" << std::quoted(project.name) << '\n'
                << std::quoted(project.notes) << '\n'
                << project.components.size() << '\n'
                << std::setprecision(std::numeric_limits<float>::max_digits10);
@@ -110,7 +116,15 @@ bool FileHandler::save(const std::filesystem::path& path, const ProjectDocument&
             stream << component.id() << ' ' << static_cast<int>(component.type()) << ' '
                    << component.x() << ' ' << component.y() << ' '
                    << component.rotation() << ' ' << std::quoted(component.label()) << ' '
-                   << component.lengthCells() << '\n';
+                   << component.lengthCells();
+            if (component.type() == ElectricalComponentType::SupplyInput)
+            {
+                const auto& s = component.supplySettings();
+                stream << ' ' << static_cast<int>(s.system) << ' ' << s.voltage << ' '
+                       << s.frequency << ' ' << s.phases << ' ' << s.neutral << ' '
+                       << s.protectiveEarth << ' ' << s.showDescription;
+            }
+            stream << '\n';
         }
         stream << project.wires.size() << '\n';
         for (const Wire& wire : project.wires)
@@ -178,7 +192,8 @@ bool FileHandler::load(const std::filesystem::path& path, ProjectDocument& proje
     if (!stream || !std::getline(stream, magic) ||
         (magic != "EWS_PROJECT 1" && magic != "EWS_PROJECT 2" &&
          magic != "EWS_PROJECT 3" && magic != "EWS_PROJECT 4" &&
-         magic != "EWS_PROJECT 5" && magic != "EWS_PROJECT 6"))
+         magic != "EWS_PROJECT 5" && magic != "EWS_PROJECT 6" &&
+         magic != "EWS_PROJECT 7"))
     {
         error = "Not a supported EWS project.";
         return false;
@@ -192,7 +207,7 @@ bool FileHandler::load(const std::filesystem::path& path, ProjectDocument& proje
 
     if (magic == "EWS_PROJECT 2" || magic == "EWS_PROJECT 3" ||
         magic == "EWS_PROJECT 4" || magic == "EWS_PROJECT 5" ||
-        magic == "EWS_PROJECT 6")
+        magic == "EWS_PROJECT 6" || magic == "EWS_PROJECT 7")
     {
         std::size_t count = 0;
         if (!(stream >> count) || count > maxComponents)
@@ -207,7 +222,9 @@ bool FileHandler::load(const std::filesystem::path& path, ProjectDocument& proje
             float x = 0, y = 0;
             if (!(stream >> id >> type >> x >> y) ||
                 (type != static_cast<int>(ElectricalComponentType::LightSwitch) &&
-                 type != static_cast<int>(ElectricalComponentType::Lamp)))
+                 type != static_cast<int>(ElectricalComponentType::Lamp) &&
+                 !(magic == "EWS_PROJECT 7" &&
+                   type == static_cast<int>(ElectricalComponentType::SupplyInput))))
             {
                 error = "Invalid electrical component data.";
                 return false;
@@ -216,7 +233,8 @@ bool FileHandler::load(const std::filesystem::path& path, ProjectDocument& proje
             int rotation = 0;
             std::string label;
             if ((magic == "EWS_PROJECT 3" || magic == "EWS_PROJECT 4" ||
-                 magic == "EWS_PROJECT 5" || magic == "EWS_PROJECT 6") &&
+                 magic == "EWS_PROJECT 5" || magic == "EWS_PROJECT 6" ||
+                 magic == "EWS_PROJECT 7") &&
                 !(stream >> rotation >> std::quoted(label)))
             {
                 error = "Invalid component properties.";
@@ -224,19 +242,44 @@ bool FileHandler::load(const std::filesystem::path& path, ProjectDocument& proje
             }
             int lengthCells = ElectricalComponent::defaultLengthCells;
             if ((magic == "EWS_PROJECT 4" || magic == "EWS_PROJECT 5" ||
-                 magic == "EWS_PROJECT 6") && !(stream >> lengthCells))
+                 magic == "EWS_PROJECT 6" || magic == "EWS_PROJECT 7") &&
+                !(stream >> lengthCells))
             {
                 error = "Invalid component length.";
                 return false;
             }
+            SupplyInputSettings supply;
+            if (magic == "EWS_PROJECT 7" &&
+                type == static_cast<int>(ElectricalComponentType::SupplyInput))
+            {
+                int system = 0, neutral = 0, pe = 0, description = 0;
+                if (!(stream >> system >> supply.voltage >> supply.frequency >> supply.phases
+                             >> neutral >> pe >> description) ||
+                    (neutral != 0 && neutral != 1) || (pe != 0 && pe != 1) ||
+                    (description != 0 && description != 1))
+                {
+                    error = "Invalid supply input properties.";
+                    return false;
+                }
+                supply.system = static_cast<SupplySystem>(system);
+                supply.neutral = neutral != 0;
+                supply.protectiveEarth = pe != 0;
+                supply.showDescription = description != 0;
+                if (!validSupplySettings(supply))
+                {
+                    error = "Invalid supply configuration.";
+                    return false;
+                }
+            }
             parsed.components.emplace_back(id, static_cast<ElectricalComponentType>(type),
-                                           x, y, std::move(label), rotation, lengthCells);
+                                           x, y, std::move(label), rotation, lengthCells, supply);
             if (id < std::numeric_limits<std::uint64_t>::max())
                 parsed.nextComponentId = std::max(parsed.nextComponentId, id + 1);
         }
     }
 
-    if (magic == "EWS_PROJECT 5" || magic == "EWS_PROJECT 6")
+    if (magic == "EWS_PROJECT 5" || magic == "EWS_PROJECT 6" ||
+        magic == "EWS_PROJECT 7")
     {
         std::size_t count = 0;
         if (!(stream >> count) || count > maxWires)
@@ -257,7 +300,7 @@ bool FileHandler::load(const std::filesystem::path& path, ProjectDocument& proje
                 return false;
             }
             std::vector<WirePoint> bends;
-            if (magic == "EWS_PROJECT 6")
+            if (magic == "EWS_PROJECT 6" || magic == "EWS_PROJECT 7")
             {
                 std::size_t bendCount = 0;
                 if (!(stream >> bendCount) || bendCount > Wire::maxBends)
