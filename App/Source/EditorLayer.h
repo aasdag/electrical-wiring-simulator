@@ -27,6 +27,7 @@ private:
     void renderToolbox();
     void renderCanvas();
     void renderWorkspace();
+    void renderPropertiesPanel();
     void renderFileDialog();
     void renderConfirmations();
     void showDialog(DialogMode mode);
@@ -36,9 +37,12 @@ private:
     void openProject(const std::filesystem::path& path);
     void requestAction(PendingAction action);
     void performAction(PendingAction action);
+    void selectComponent(const ElectricalComponent& component);
 
     ProjectDocument m_project;
     std::optional<ElectricalComponentType> m_placementTool;
+    std::optional<std::uint64_t> m_selectedComponentId;
+    std::array<char, 64> m_componentLabel{};
     std::filesystem::path m_projectPath;
     std::filesystem::path m_directory;
     std::vector<std::filesystem::directory_entry> m_entries;

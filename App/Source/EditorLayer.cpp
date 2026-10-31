@@ -58,22 +58,36 @@ namespace
         }
     }
 
-    // A small schematic-style single-pole light switch. Both saved and preview symbols
-    // are drawn from the same model coordinates.
-    void drawLightSwitch(ImDrawList* draw, ImVec2 center, std::uint64_t id, bool preview)
+    // A single-pole light-switch symbol in canvas coordinates, rotated around its center.
+    void drawLightSwitch(ImDrawList* draw, ImVec2 center,
+                         const ElectricalComponent& component, bool preview, bool selected = false)
     {
         const ImU32 stroke = preview ? IM_COL32(90, 186, 255, 160) : IM_COL32(148, 217, 255, 255);
         const ImU32 fill = preview ? IM_COL32(90, 186, 255, 110) : IM_COL32(45, 117, 177, 255);
-        const float x = center.x, y = center.y;
-        draw->AddLine(ImVec2(x - 34, y), ImVec2(x - 16, y), stroke, 2.2f);
-        draw->AddLine(ImVec2(x + 16, y), ImVec2(x + 34, y), stroke, 2.2f);
-        draw->AddCircleFilled(ImVec2(x - 14, y), 4.3f, fill);
-        draw->AddCircle(ImVec2(x - 14, y), 4.3f, stroke, 0, 1.8f);
-        draw->AddCircleFilled(ImVec2(x + 14, y), 4.3f, fill);
-        draw->AddCircle(ImVec2(x + 14, y), 4.3f, stroke, 0, 1.8f);
-        draw->AddLine(ImVec2(x - 11, y - 3), ImVec2(x + 7, y - 16), stroke, 2.4f);
-        const std::string label = "S" + std::to_string(id);
-        draw->AddText(ImVec2(x - 12, y + 12), stroke, label.c_str());
+        const float radians = component.rotation() * (3.14159265f / 180.0f);
+        const float cs = std::cos(radians), sn = std::sin(radians);
+        const auto point = [&](float x, float y) {
+            return ImVec2(center.x + x * cs - y * sn,
+                          center.y + x * sn + y * cs);
+        };
+
+        draw->AddLine(point(-34, 0), point(-16, 0), stroke, 2.2f);
+        draw->AddLine(point(16, 0), point(34, 0), stroke, 2.2f);
+        draw->AddCircleFilled(point(-14, 0), 4.3f, fill);
+        draw->AddCircle(point(-14, 0), 4.3f, stroke, 0, 1.8f);
+        draw->AddCircleFilled(point(14, 0), 4.3f, fill);
+        draw->AddCircle(point(14, 0), 4.3f, stroke, 0, 1.8f);
+        draw->AddLine(point(-11, -3), point(7, -16), stroke, 2.4f);
+
+        if (selected)
+            draw->AddQuad(point(-42, -24), point(42, -24), point(42, 24), point(-42, 24),
+                          IM_COL32(88, 191, 255, 255), 2.0f);
+
+        const std::string label = component.label().empty()
+            ? "S" + std::to_string(component.id()) : component.label();
+        const float labelWidth = ImGui::CalcTextSize(label.c_str()).x;
+        draw->AddText(ImVec2(center.x - labelWidth * 0.5f, center.y + 16.0f),
+                      stroke, label.c_str());
     }
 }
 
@@ -102,14 +116,20 @@ void EditorLayer::onImGuiRender()
 {
     // Cancel the active placement tool before drawing the toolbox/canvas.
     // Never consume Escape for placement while a file dialog is open.
-    if (m_placementTool && m_dialog == DialogMode::None &&
-        (ImGui::IsKeyPressed(ImGuiKey_Escape) || ImGui::IsMouseClicked(ImGuiMouseButton_Right)))
+    if (m_dialog == DialogMode::None && ImGui::IsKeyPressed(ImGuiKey_Escape))
+    {
+        if (m_placementTool) m_placementTool.reset();
+        else m_selectedComponentId.reset();
+    }
+    else if (m_dialog == DialogMode::None && m_placementTool &&
+             ImGui::IsMouseClicked(ImGuiMouseButton_Right))
         m_placementTool.reset();
 
     renderMenuBar();
     renderToolbox();
     renderCanvas();
     renderWorkspace();
+    renderPropertiesPanel();
     renderFileDialog();
     renderConfirmations();
 }
@@ -136,6 +156,7 @@ void EditorLayer::performAction(PendingAction action)
             copyText(m_name.data(), m_name.size(), m_project.name);
             m_notes.fill('\0');
             m_placementTool.reset();
+            m_selectedComponentId.reset();
             break;
         case PendingAction::Open: showDialog(DialogMode::Open); break;
         case PendingAction::Exit: Core::Application::get().stop(); break;
@@ -214,7 +235,8 @@ void EditorLayer::renderCanvas()
     const ImGuiViewport* viewport = ImGui::GetMainViewport();
     const float top = viewport->Pos.y + ImGui::GetFrameHeight() + 74.0f;
     const float left = viewport->Pos.x + 314.0f;
-    const float width = std::max(110.0f, viewport->Size.x - 326.0f);
+    const float rightPanelWidth = m_selectedComponentId ? 314.0f : 0.0f;
+    const float width = std::max(110.0f, viewport->Size.x - 326.0f - rightPanelWidth);
     const float height = std::max(110.0f, viewport->Size.y - (top - viewport->Pos.y) - 12.0f);
     ImGui::SetNextWindowPos(ImVec2(left, top), ImGuiCond_Always);
     ImGui::SetNextWindowSize(ImVec2(width, height), ImGuiCond_Always);
@@ -246,11 +268,33 @@ void EditorLayer::renderCanvas()
                 draw->AddLine(ImVec2(origin.x, origin.y + y),
                               ImVec2(end.x, origin.y + y), IM_COL32(57, 70, 88, 120));
 
+            // Select the topmost component under the cursor when not placing a new one.
+            if (clicked && !m_placementTool)
+            {
+                m_selectedComponentId.reset();
+                const ImVec2 mouse = ImGui::GetMousePos();
+                for (auto it = m_project.components.rbegin(); it != m_project.components.rend(); ++it)
+                {
+                    const float dx = mouse.x - origin.x - it->x();
+                    const float dy = mouse.y - origin.y - it->y();
+                    const float radians = it->rotation() * (3.14159265f / 180.0f);
+                    const float cs = std::cos(radians), sn = std::sin(radians);
+                    const float localX = dx * cs + dy * sn;
+                    const float localY = -dx * sn + dy * cs;
+                    if (std::abs(localX) <= 42.0f && std::abs(localY) <= 24.0f)
+                    {
+                        selectComponent(*it);
+                        break;
+                    }
+                }
+            }
+
             for (const ElectricalComponent& component : m_project.components)
             {
                 if (component.type() == ElectricalComponentType::LightSwitch)
                     drawLightSwitch(draw, ImVec2(origin.x + component.x(),
-                                                 origin.y + component.y()), component.id(), false);
+                                                 origin.y + component.y()), component, false,
+                                    m_selectedComponentId == component.id());
             }
 
             if (hovered && m_placementTool.has_value() && size.x >= 80.0f && size.y >= 80.0f)
@@ -260,17 +304,85 @@ void EditorLayer::renderCanvas()
                                            40.0f, size.x - 40.0f);
                 const float y = std::clamp(std::round((mouse.y - origin.y) / 20.0f) * 20.0f,
                                            30.0f, size.y - 30.0f);
-                drawLightSwitch(draw, ImVec2(origin.x + x, origin.y + y),
-                                m_project.nextComponentId, true);
+                const ElectricalComponent preview(m_project.nextComponentId, *m_placementTool, x, y);
+                drawLightSwitch(draw, ImVec2(origin.x + x, origin.y + y), preview, true);
                 ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
                 if (clicked)
                 {
                     m_project.addComponent(*m_placementTool, x, y);
+                    selectComponent(m_project.components.back());
                     m_dirty = true;
                 }
             }
             draw->PopClipRect();
         }
+    }
+    ImGui::End();
+    ImGui::PopStyleColor();
+}
+
+void EditorLayer::selectComponent(const ElectricalComponent& component)
+{
+    m_selectedComponentId = component.id();
+    copyText(m_componentLabel.data(), m_componentLabel.size(), component.label());
+}
+
+void EditorLayer::renderPropertiesPanel()
+{
+    if (!m_selectedComponentId) return;
+    const auto it = std::find_if(m_project.components.begin(), m_project.components.end(),
+        [&](const ElectricalComponent& component) { return component.id() == *m_selectedComponentId; });
+    if (it == m_project.components.end())
+    {
+        m_selectedComponentId.reset();
+        return;
+    }
+
+    ElectricalComponent& component = *it;
+    const ImGuiViewport* viewport = ImGui::GetMainViewport();
+    const float top = viewport->Pos.y + ImGui::GetFrameHeight() + 74.0f;
+    ImGui::SetNextWindowPos(ImVec2(viewport->Pos.x + viewport->Size.x - 302.0f, top), ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(290.0f, std::max(240.0f,
+        viewport->Size.y - (top - viewport->Pos.y) - 12.0f)), ImGuiCond_Always);
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.085f, 0.12f, 0.17f, 1.0f));
+    if (ImGui::Begin("Properties##component", nullptr,
+                     ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize |
+                     ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings))
+    {
+        ImGui::TextColored(ImVec4(0.46f, 0.73f, 1.0f, 1.0f), "COMPONENT PROPERTIES");
+        ImGui::Separator();
+        ImGui::TextUnformatted("Light switch");
+        ImGui::TextDisabled("ID: %llu", static_cast<unsigned long long>(component.id()));
+        ImGui::Spacing();
+
+        if (ImGui::InputText("Name", m_componentLabel.data(), m_componentLabel.size()))
+        {
+            component.setLabel(m_componentLabel.data());
+            m_dirty = true;
+        }
+
+        float x = component.x(), y = component.y();
+        bool moved = ImGui::DragFloat("X", &x, 1.0f, 0.0f, 1000000.0f, "%.0f px");
+        moved |= ImGui::DragFloat("Y", &y, 1.0f, 0.0f, 1000000.0f, "%.0f px");
+        if (moved && std::isfinite(x) && std::isfinite(y))
+        {
+            component.setPosition(std::clamp(x, 0.0f, 1000000.0f),
+                                  std::clamp(y, 0.0f, 1000000.0f));
+            m_dirty = true;
+        }
+
+        const char* rotations[] = { "0 deg", "90 deg", "180 deg", "270 deg" };
+        int rotationIndex = component.rotation() / 90;
+        if (ImGui::Combo("Rotation", &rotationIndex, rotations, 4))
+        {
+            component.setRotation(rotationIndex * 90);
+            m_dirty = true;
+        }
+
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::TextDisabled("Changes are saved with the project.");
+        if (ImGui::Button("Deselect")) m_selectedComponentId.reset();
     }
     ImGui::End();
     ImGui::PopStyleColor();
@@ -380,6 +492,7 @@ void EditorLayer::openProject(const fs::path& path)
     {
         m_project = std::move(loaded);
         m_placementTool.reset();
+        m_selectedComponentId.reset();
         m_projectPath = path;
         m_dirty = false;
         copyText(m_name.data(), m_name.size(), m_project.name);
