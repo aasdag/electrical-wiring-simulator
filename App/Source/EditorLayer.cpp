@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <cstddef>
 #include <cstdio>
 #include <cstring>
 #include <system_error>
@@ -101,7 +102,7 @@ namespace
         path = std::move(simplified);
     }
 
-    void appendWirePoint(std::vector<WirePoint>& path, WirePoint target)
+    void appendWirePoint(std::vector<WirePoint>& path, WirePoint target, bool simplify = true)
     {
         if (path.empty()) { path.push_back(target); return; }
         const WirePoint previous = path.back();
@@ -109,14 +110,16 @@ namespace
         if (previous.x != target.x && previous.y != target.y)
             path.push_back({target.x, previous.y}); // horizontal first, then vertical
         path.push_back(target);
-        simplifyWirePath(path);
+        if (simplify) simplifyWirePath(path);
     }
 
     std::vector<WirePoint> wirePath(const ProjectDocument& project, const Wire& wire)
     {
+        // Keep explicitly added points, including points on a straight segment.
+        // Otherwise an inserted point would disappear before the user could move it.
         std::vector<WirePoint> result{toPoint(resolveWireEndpoint(project, wire.start()))};
-        for (const WirePoint& bend : wire.bends()) appendWirePoint(result, bend);
-        appendWirePoint(result, toPoint(resolveWireEndpoint(project, wire.end())));
+        for (const WirePoint& bend : wire.bends()) appendWirePoint(result, bend, false);
+        appendWirePoint(result, toPoint(resolveWireEndpoint(project, wire.end())), false);
         return result;
     }
 
@@ -537,10 +540,60 @@ void EditorLayer::renderCanvas()
                 }
             }
 
+            // Double-click an existing wire segment to insert a movable grid point.
+            // It is stored in the same Wire; no new wire or conductor set is created.
+            bool addedCorner = false;
+            if (!m_simulationMode && !m_wireTool && !m_placementTool &&
+                m_dialog == DialogMode::None && hovered && m_selectedWireId &&
+                ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
+            {
+                auto wire = std::find_if(m_project.wires.begin(), m_project.wires.end(),
+                    [&](const Wire& w) { return w.id() == *m_selectedWireId; });
+                if (wire != m_project.wires.end())
+                {
+                    auto path = wirePath(m_project, *wire);
+                    if (path.size() >= 2 && path.size() - 2 < Wire::maxBends)
+                    {
+                        const ImVec2 mouse = ImGui::GetMousePos();
+                        const ImVec2 local(mouse.x - origin.x, mouse.y - origin.y);
+                        const float grid = static_cast<float>(ElectricalComponent::gridSize);
+                        for (std::size_t i = 1; i < path.size(); ++i)
+                        {
+                            const WirePoint a = path[i - 1], b = path[i];
+                            if (pointSegmentDistanceSquared(local, ImVec2(a.x, a.y),
+                                    ImVec2(b.x, b.y)) > 9.0f * 9.0f)
+                                continue;
+
+                            WirePoint point;
+                            if (a.y == b.y)
+                            {
+                                point.x = std::clamp(std::round(local.x / grid) * grid,
+                                                     std::min(a.x, b.x), std::max(a.x, b.x));
+                                point.y = a.y;
+                            }
+                            else if (a.x == b.x)
+                            {
+                                point.x = a.x;
+                                point.y = std::clamp(std::round(local.y / grid) * grid,
+                                                     std::min(a.y, b.y), std::max(a.y, b.y));
+                            }
+                            else continue;
+
+                            if (point == a || point == b) continue;
+                            path.insert(path.begin() + static_cast<std::ptrdiff_t>(i), point);
+                            wire->setBends(interiorPoints(path));
+                            m_dirty = true;
+                            addedCorner = true;
+                            break;
+                        }
+                    }
+                }
+            }
+
             // A selected wire's square handles edit its corners in grid steps.
             // Use the path captured at drag start so edits don't accumulate extra elbows.
             bool cornerGrabbed = false;
-            if (!m_simulationMode && !m_wireTool && !m_placementTool &&
+            if (!addedCorner && !m_simulationMode && !m_wireTool && !m_placementTool &&
                 m_dialog == DialogMode::None && hovered && m_selectedWireId &&
                 ImGui::IsMouseClicked(ImGuiMouseButton_Left))
             {
@@ -593,7 +646,7 @@ void EditorLayer::renderCanvas()
                     path[m_wireCornerDrag->cornerIndex] = target;
                     std::vector<WirePoint> orthogonal{path.front()};
                     for (std::size_t i = 1; i < path.size(); ++i)
-                        appendWirePoint(orthogonal, path[i]);
+                        appendWirePoint(orthogonal, path[i], false);
                     auto bends = interiorPoints(orthogonal);
                     if (bends.size() <= Wire::maxBends && bends != wire->bends())
                     {
@@ -605,7 +658,7 @@ void EditorLayer::renderCanvas()
 
             // The square at the positive terminal resizes symmetrically in grid steps.
             bool resizeStarted = false;
-            if (!cornerGrabbed && !m_wireCornerDrag &&
+            if (!addedCorner && !cornerGrabbed && !m_wireCornerDrag &&
                 !m_simulationMode && !m_wireTool && !m_placementTool && m_dialog == DialogMode::None &&
                 hovered && m_selectedComponentId &&
                 ImGui::IsMouseClicked(ImGuiMouseButton_Left))
@@ -666,7 +719,7 @@ void EditorLayer::renderCanvas()
             }
 
             // Select on mouse-down in edit mode; simulation continues to toggle on click.
-            if (!cornerGrabbed && !m_wireCornerDrag &&
+            if (!addedCorner && !cornerGrabbed && !m_wireCornerDrag &&
                 !resizeStarted && !m_componentResize && !m_wireTool && !m_placementTool &&
                 m_dialog == DialogMode::None &&
                 ((m_simulationMode && clicked) ||
@@ -744,7 +797,7 @@ void EditorLayer::renderCanvas()
             }
 
             // When no component was hit, allow selecting a line near the cursor.
-            if (!cornerGrabbed && !m_wireCornerDrag &&
+            if (!addedCorner && !cornerGrabbed && !m_wireCornerDrag &&
                 !m_simulationMode && !m_wireTool && !m_placementTool &&
                 m_dialog == DialogMode::None && hovered &&
                 ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !m_selectedComponentId)
@@ -908,9 +961,35 @@ void EditorLayer::renderPropertiesPanel()
             }
             ImGui::EndDisabled();
             ImGui::TextDisabled("1 to 32 conductors. Metadata only for now.");
-            const auto path = wirePath(m_project, *it);
-            ImGui::TextDisabled("Corners: %zu", path.size() >= 2 ? path.size() - 2 : 0);
-            ImGui::TextDisabled("Drag blue corner handles to reroute the wire.");
+            ImGui::Separator();
+            ImGui::Text("Bend points: %zu", it->bends().size());
+            ImGui::TextWrapped("Double-click a wire segment to add a point. Drag its blue handle to move it.");
+            if (!it->bends().empty())
+            {
+                std::optional<std::size_t> removeIndex;
+                ImGui::BeginChild("WireBendList", ImVec2(0, 150), true);
+                for (std::size_t i = 0; i < it->bends().size(); ++i)
+                {
+                    ImGui::PushID(static_cast<int>(i));
+                    const WirePoint point = it->bends()[i];
+                    ImGui::Text("Point %zu", i + 1);
+                    ImGui::SameLine(115.0f);
+                    ImGui::BeginDisabled(m_simulationMode);
+                    if (ImGui::SmallButton("Remove")) removeIndex = i;
+                    ImGui::EndDisabled();
+                    ImGui::TextDisabled("(%.0f, %.0f)", point.x, point.y);
+                    ImGui::PopID();
+                }
+                ImGui::EndChild();
+                if (removeIndex)
+                {
+                    auto bends = it->bends();
+                    bends.erase(bends.begin() + static_cast<std::ptrdiff_t>(*removeIndex));
+                    it->setBends(std::move(bends));
+                    m_dirty = true;
+                }
+            }
+            ImGui::TextDisabled("Necessary 90-degree turns are kept automatically.");
             const ImVec2 a = resolveWireEndpoint(m_project, it->start());
             const ImVec2 b = resolveWireEndpoint(m_project, it->end());
             ImGui::Separator();
