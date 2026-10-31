@@ -60,9 +60,15 @@ namespace
             if (wire.id() == 0 || wire.id() == std::numeric_limits<std::uint64_t>::max() ||
                 wire.conductors() < Wire::minConductors ||
                 wire.conductors() > Wire::maxConductors ||
+                wire.bends().size() > Wire::maxBends ||
                 !validEndpoint(wire.start()) || !validEndpoint(wire.end()) ||
                 !wireIds.insert(wire.id()).second)
                 return false;
+            for (const WirePoint& bend : wire.bends())
+                if (!std::isfinite(bend.x) || !std::isfinite(bend.y) ||
+                    bend.x < 0.0f || bend.y < 0.0f ||
+                    bend.x > 1000000.0f || bend.y > 1000000.0f)
+                    return false;
             // A wire must connect two different points or terminals.
             const auto& a = wire.start();
             const auto& b = wire.end();
@@ -94,7 +100,7 @@ bool FileHandler::save(const std::filesystem::path& path, const ProjectDocument&
             return false;
         }
 
-        stream << "EWS_PROJECT 5\n" << std::quoted(project.name) << '\n'
+        stream << "EWS_PROJECT 6\n" << std::quoted(project.name) << '\n'
                << std::quoted(project.notes) << '\n'
                << project.components.size() << '\n'
                << std::setprecision(std::numeric_limits<float>::max_digits10);
@@ -112,7 +118,11 @@ bool FileHandler::save(const std::filesystem::path& path, const ProjectDocument&
             const auto& b = wire.end();
             stream << wire.id() << ' ' << wire.conductors() << ' '
                    << a.x << ' ' << a.y << ' ' << a.componentId << ' ' << a.terminal << ' '
-                   << b.x << ' ' << b.y << ' ' << b.componentId << ' ' << b.terminal << '\n';
+                   << b.x << ' ' << b.y << ' ' << b.componentId << ' ' << b.terminal << ' '
+                   << wire.bends().size();
+            for (const WirePoint& bend : wire.bends())
+                stream << ' ' << bend.x << ' ' << bend.y;
+            stream << '\n';
         }
         stream.flush();
         if (!stream)
@@ -167,7 +177,7 @@ bool FileHandler::load(const std::filesystem::path& path, ProjectDocument& proje
     if (!stream || !std::getline(stream, magic) ||
         (magic != "EWS_PROJECT 1" && magic != "EWS_PROJECT 2" &&
          magic != "EWS_PROJECT 3" && magic != "EWS_PROJECT 4" &&
-         magic != "EWS_PROJECT 5"))
+         magic != "EWS_PROJECT 5" && magic != "EWS_PROJECT 6"))
     {
         error = "Not a supported EWS project.";
         return false;
@@ -221,7 +231,7 @@ bool FileHandler::load(const std::filesystem::path& path, ProjectDocument& proje
         }
     }
 
-    if (magic == "EWS_PROJECT 5")
+    if (magic == "EWS_PROJECT 5" || magic == "EWS_PROJECT 6")
     {
         std::size_t count = 0;
         if (!(stream >> count) || count > maxWires)
@@ -241,7 +251,28 @@ bool FileHandler::load(const std::filesystem::path& path, ProjectDocument& proje
                 error = "Invalid wire data.";
                 return false;
             }
-            parsed.wires.emplace_back(id, start, end, conductors);
+            std::vector<WirePoint> bends;
+            if (magic == "EWS_PROJECT 6")
+            {
+                std::size_t bendCount = 0;
+                if (!(stream >> bendCount) || bendCount > Wire::maxBends)
+                {
+                    error = "Invalid number of wire corners.";
+                    return false;
+                }
+                bends.reserve(bendCount);
+                for (std::size_t j = 0; j < bendCount; ++j)
+                {
+                    WirePoint bend;
+                    if (!(stream >> bend.x >> bend.y))
+                    {
+                        error = "Invalid wire corner.";
+                        return false;
+                    }
+                    bends.push_back(bend);
+                }
+            }
+            parsed.wires.emplace_back(id, start, end, conductors, std::move(bends));
             if (id < std::numeric_limits<std::uint64_t>::max())
                 parsed.nextWireId = std::max(parsed.nextWireId, id + 1);
         }

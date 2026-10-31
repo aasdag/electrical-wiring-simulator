@@ -24,6 +24,15 @@ private:
     enum class DialogMode { None, Open, Save };
     enum class PendingAction { None, New, Open, Exit };
 
+    struct WireCornerDrag
+    {
+        std::uint64_t id;
+        std::size_t cornerIndex;
+        std::vector<WirePoint> originalBends;
+        std::vector<WirePoint> originalPath;
+        bool wasDirty;
+    };
+
     struct ComponentResize
     {
         std::uint64_t id;
@@ -43,6 +52,7 @@ private:
 
     void cancelComponentDrag();
     void cancelComponentResize();
+    void cancelWireCornerDrag();
     void renderMenuBar();
     void renderToolbox();
     void renderCanvas();
@@ -65,7 +75,9 @@ private:
     std::optional<ElectricalComponentType> m_placementTool;
     bool m_wireTool = false;
     std::optional<WireEndpoint> m_wireStart;
+    std::vector<WirePoint> m_wireBends;
     std::optional<std::uint64_t> m_selectedWireId;
+    std::optional<WireCornerDrag> m_wireCornerDrag;
     std::optional<std::uint64_t> m_selectedComponentId;
     std::optional<ComponentDrag> m_componentDrag;
     std::optional<ComponentResize> m_componentResize;
