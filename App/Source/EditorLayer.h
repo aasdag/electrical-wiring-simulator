@@ -4,6 +4,7 @@
 #include "FileHandler.h"
 
 #include <array>
+#include <cstddef>
 #include <filesystem>
 #include <optional>
 #include <string>
@@ -77,6 +78,7 @@ private:
     std::optional<WireEndpoint> m_wireStart;
     std::vector<WirePoint> m_wireBends;
     std::optional<std::uint64_t> m_selectedWireId;
+    std::optional<std::size_t> m_selectedWireCornerIndex;
     std::optional<WireCornerDrag> m_wireCornerDrag;
     std::optional<std::uint64_t> m_selectedComponentId;
     std::optional<ComponentDrag> m_componentDrag;
