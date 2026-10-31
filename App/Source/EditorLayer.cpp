@@ -125,7 +125,8 @@ void EditorLayer::onImGuiRender()
         (ImGui::IsKeyPressed(ImGuiKey_Escape) ||
          ImGui::IsMouseClicked(ImGuiMouseButton_Right)))
     {
-        if (m_simulationMode) setSimulationMode(false);
+        if (m_componentDrag) cancelComponentDrag();
+        else if (m_simulationMode) setSimulationMode(false);
         else if (m_placementTool) m_placementTool.reset();
         else if (ImGui::IsKeyPressed(ImGuiKey_Escape)) m_selectedComponentId.reset();
     }
@@ -151,6 +152,7 @@ void EditorLayer::requestAction(PendingAction action)
 
 void EditorLayer::performAction(PendingAction action)
 {
+    cancelComponentDrag();
     m_pending = PendingAction::None;
     switch (action)
     {
@@ -262,7 +264,8 @@ void EditorLayer::renderCanvas()
                                            : ImVec4(0.63f, 0.77f, 0.89f, 1.0f),
                            m_simulationMode ? "SIMULATION MODE" : "DESIGN CANVAS");
         ImGui::SameLine();
-        ImGui::TextDisabled("  Grid: 20 px");
+        ImGui::TextDisabled(m_simulationMode ? "  Click a switch to toggle" :
+                            "  Grid: 20 px  |  Drag a component to move");
         ImGui::Separator();
 
         const ImVec2 size = ImGui::GetContentRegionAvail();
@@ -282,8 +285,10 @@ void EditorLayer::renderCanvas()
                 draw->AddLine(ImVec2(origin.x, origin.y + y),
                               ImVec2(end.x, origin.y + y), IM_COL32(57, 70, 88, 120));
 
-            // Select the topmost component under the cursor when not placing a new one.
-            if (clicked && !m_placementTool && m_dialog == DialogMode::None)
+            // Select on mouse-down in edit mode; simulation continues to toggle on click.
+            if (!m_placementTool && m_dialog == DialogMode::None &&
+                ((m_simulationMode && clicked) ||
+                 (!m_simulationMode && hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left))))
             {
                 m_selectedComponentId.reset();
                 const ImVec2 mouse = ImGui::GetMousePos();
@@ -298,9 +303,58 @@ void EditorLayer::renderCanvas()
                     if (std::abs(localX) <= 42.0f && std::abs(localY) <= 24.0f)
                     {
                         selectComponent(*it);
-                        if (m_simulationMode && !m_closedSwitches.erase(it->id()))
-                            m_closedSwitches.insert(it->id());
+                        if (m_simulationMode)
+                        {
+                            if (!m_closedSwitches.erase(it->id()))
+                                m_closedSwitches.insert(it->id());
+                        }
+                        else
+                        {
+                            // Preserve the cursor's grab point to avoid jumping.
+                            m_componentDrag = ComponentDrag{
+                                it->id(), it->x(), it->y(), dx, dy, m_dirty
+                            };
+                        }
                         break;
+                    }
+                }
+            }
+
+            if (m_componentDrag)
+            {
+                auto it = std::find_if(m_project.components.begin(), m_project.components.end(),
+                    [&](const ElectricalComponent& component) {
+                        return component.id() == m_componentDrag->id;
+                    });
+                if (it == m_project.components.end())
+                {
+                    m_componentDrag.reset();
+                }
+                else if (ImGui::IsMouseReleased(ImGuiMouseButton_Left))
+                {
+                    if (it->x() == m_componentDrag->startX &&
+                        it->y() == m_componentDrag->startY)
+                        m_dirty = m_componentDrag->wasDirty;
+                    m_componentDrag.reset();
+                }
+                else if (ImGui::IsMouseDown(ImGuiMouseButton_Left) &&
+                         ImGui::IsMouseDragging(ImGuiMouseButton_Left, 4.0f) &&
+                         size.x >= 80.0f && size.y >= 80.0f)
+                {
+                    const ImVec2 mouse = ImGui::GetMousePos();
+                    const auto snap = [](float value) {
+                        return std::round(value / 20.0f) * 20.0f;
+                    };
+                    const float maxX = std::floor((size.x - 40.0f) / 20.0f) * 20.0f;
+                    const float maxY = std::floor((size.y - 30.0f) / 20.0f) * 20.0f;
+                    const float x = std::clamp(
+                        snap(mouse.x - origin.x - m_componentDrag->offsetX), 40.0f, maxX);
+                    const float y = std::clamp(
+                        snap(mouse.y - origin.y - m_componentDrag->offsetY), 40.0f, maxY);
+                    if (x != it->x() || y != it->y())
+                    {
+                        it->setPosition(x, y);
+                        m_dirty = true;
                     }
                 }
             }
@@ -339,8 +393,24 @@ void EditorLayer::renderCanvas()
     ImGui::PopStyleColor();
 }
 
+void EditorLayer::cancelComponentDrag()
+{
+    if (!m_componentDrag) return;
+
+    const auto it = std::find_if(m_project.components.begin(), m_project.components.end(),
+        [&](const ElectricalComponent& component) {
+            return component.id() == m_componentDrag->id;
+        });
+    if (it != m_project.components.end())
+        it->setPosition(m_componentDrag->startX, m_componentDrag->startY);
+
+    m_dirty = m_componentDrag->wasDirty;
+    m_componentDrag.reset();
+}
+
 void EditorLayer::setSimulationMode(bool enabled)
 {
+    cancelComponentDrag();
     m_simulationMode = enabled;
     m_closedSwitches.clear(); // Simulation states are transient and never saved.
     m_placementTool.reset();
@@ -500,6 +570,7 @@ void EditorLayer::navigate(const fs::path& path)
 
 void EditorLayer::showDialog(DialogMode mode)
 {
+    cancelComponentDrag();
     m_dialog = mode;
     m_error.clear();
     m_selectedFile.clear();
@@ -527,6 +598,7 @@ void EditorLayer::saveProject(const fs::path& path)
 
 void EditorLayer::openProject(const fs::path& path)
 {
+    cancelComponentDrag();
     ProjectDocument loaded;
     if (FileHandler::load(path, loaded, m_error))
     {
