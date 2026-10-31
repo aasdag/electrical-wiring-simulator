@@ -54,12 +54,14 @@ namespace
                 return false;
             if (endpoint.componentId == 0)
                 return endpoint.terminal == 0;
-            if (endpoint.terminal != -1 && endpoint.terminal != 1)
+            if (endpoint.terminal != -1 && endpoint.terminal != 0 &&
+                endpoint.terminal != 1)
                 return false;
             return std::any_of(project.components.begin(), project.components.end(),
                 [&](const ElectricalComponent& c) {
                     return c.id() == endpoint.componentId &&
-                           (c.type() != ElectricalComponentType::SupplyInput || endpoint.terminal == 1);
+                           (c.type() != ElectricalComponentType::SupplyInput ||
+                            endpoint.terminal == 0 || endpoint.terminal == 1);
                 });
         };
         for (const Wire& wire : project.wires)
@@ -79,7 +81,8 @@ namespace
             // A wire must connect two different points or terminals.
             const auto& a = wire.start();
             const auto& b = wire.end();
-            if (a.componentId && a.componentId == b.componentId && a.terminal == b.terminal)
+            if (a.componentId && a.componentId == b.componentId &&
+                (a.terminal == b.terminal || a.terminal == 0 || b.terminal == 0))
                 return false;
             if (!a.componentId && !b.componentId && a.x == b.x && a.y == b.y)
                 return false;

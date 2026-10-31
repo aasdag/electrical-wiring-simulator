@@ -60,19 +60,15 @@ namespace
         }
     }
 
-    ImVec2 resolveWireEndpoint(const ProjectDocument& project, const WireEndpoint& endpoint)
+    ImVec2 resolveWireEndpoint(const ProjectDocument& project, const WireEndpoint& endpoint,
+                               SchematicView view)
     {
         if (endpoint.componentId != 0)
         {
             const auto it = std::find_if(project.components.begin(), project.components.end(),
                 [&](const ElectricalComponent& c) { return c.id() == endpoint.componentId; });
             if (it != project.components.end())
-            {
-                const float radians = it->rotation() * (3.14159265f / 180.0f);
-                const float distance = endpoint.terminal * it->halfLengthPx();
-                return ImVec2(it->x() + distance * std::cos(radians),
-                              it->y() + distance * std::sin(radians));
-            }
+                return ComponentRenderer::connectionPoint(*it, endpoint.terminal, view);
         }
         return ImVec2(endpoint.x, endpoint.y);
     }
@@ -114,22 +110,23 @@ namespace
         if (simplify) simplifyWirePath(path);
     }
 
-    std::vector<WirePoint> wirePath(const ProjectDocument& project, const Wire& wire)
+    std::vector<WirePoint> wirePath(const ProjectDocument& project, const Wire& wire,
+                                    SchematicView view)
     {
         // Keep explicitly added points, including points on a straight segment.
         // Otherwise an inserted point would disappear before the user could move it.
-        std::vector<WirePoint> result{toPoint(resolveWireEndpoint(project, wire.start()))};
+        std::vector<WirePoint> result{toPoint(resolveWireEndpoint(project, wire.start(), view))};
         for (const WirePoint& bend : wire.bends()) appendWirePoint(result, bend, false);
-        appendWirePoint(result, toPoint(resolveWireEndpoint(project, wire.end())), false);
+        appendWirePoint(result, toPoint(resolveWireEndpoint(project, wire.end(), view)), false);
         return result;
     }
 
     std::vector<WirePoint> routeDraft(const ProjectDocument& project,
                                      const WireEndpoint& start,
                                      const std::vector<WirePoint>& bends,
-                                     WirePoint target)
+                                     WirePoint target, SchematicView view)
     {
-        std::vector<WirePoint> result{toPoint(resolveWireEndpoint(project, start))};
+        std::vector<WirePoint> result{toPoint(resolveWireEndpoint(project, start, view))};
         for (const WirePoint& bend : bends) appendWirePoint(result, bend);
         appendWirePoint(result, target);
         return result;
@@ -423,7 +420,7 @@ void EditorLayer::renderCanvas()
             // Every routed polyline remains one Wire, including all its corners.
             for (const Wire& wire : m_project.wires)
             {
-                const auto path = wirePath(m_project, wire);
+                const auto path = wirePath(m_project, wire, m_schematicView);
                 const bool selected = m_selectedWireId == wire.id();
                 const ImU32 color = selected ? IM_COL32(104, 216, 255, 255)
                                              : IM_COL32(223, 177, 103, 255);
@@ -459,12 +456,17 @@ void EditorLayer::renderCanvas()
                 float closestSq = 12.0f * 12.0f;
                 for (const ElectricalComponent& component : m_project.components)
                 {
-                    for (const int side : {-1, 1})
+                    // A single logical anchor in SingleLine, regardless of whether
+                    // the new wire starts or finishes here.
+                    const int first = m_schematicView == SchematicView::SingleLine ? 0 : -1;
+                    const int last = m_schematicView == SchematicView::SingleLine ? 0 : 1;
+                    for (int terminalIndex = first; terminalIndex <= last; ++terminalIndex)
                     {
-                        if (component.type() == ElectricalComponentType::SupplyInput && side == -1)
+                        if (component.type() == ElectricalComponentType::SupplyInput &&
+                            terminalIndex == -1)
                             continue;
-                        const WireEndpoint candidate{component.x(), component.y(), component.id(), side};
-                        const ImVec2 terminal = resolveWireEndpoint(m_project, candidate);
+                        const ImVec2 terminal = ComponentRenderer::connectionPoint(
+                            component, terminalIndex, m_schematicView);
                         const float dx = mouse.x - origin.x - terminal.x;
                         const float dy = mouse.y - origin.y - terminal.y;
                         const float distSq = dx * dx + dy * dy;
@@ -474,7 +476,7 @@ void EditorLayer::renderCanvas()
                             result.x = terminal.x;
                             result.y = terminal.y;
                             result.componentId = component.id();
-                            result.terminal = side;
+                            result.terminal = terminalIndex;
                         }
                     }
                 }
@@ -489,7 +491,7 @@ void EditorLayer::renderCanvas()
                 draw->AddCircleFilled(pos, 5.0f, IM_COL32(105, 230, 172, 255));
                 if (m_wireStart)
                 {
-                    const auto path = routeDraft(m_project, *m_wireStart, m_wireBends, target);
+                    const auto path = routeDraft(m_project, *m_wireStart, m_wireBends, target, m_schematicView);
                     drawWirePath(draw, origin, path, IM_COL32(105, 230, 172, 190), 2.0f);
                 }
                 ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
@@ -500,12 +502,12 @@ void EditorLayer::renderCanvas()
                         m_wireStart = endpoint;
                     else
                     {
-                        const WirePoint start = toPoint(resolveWireEndpoint(m_project, *m_wireStart));
+                        const WirePoint start = toPoint(resolveWireEndpoint(m_project, *m_wireStart, m_schematicView));
                         const bool finish = endpoint.componentId != 0 ||
                                             ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left);
                         if (finish)
                         {
-                            auto path = routeDraft(m_project, *m_wireStart, m_wireBends, target);
+                            auto path = routeDraft(m_project, *m_wireStart, m_wireBends, target, m_schematicView);
                             if (path.size() >= 2 && path.front() != path.back())
                             {
                                 auto bends = interiorPoints(path);
@@ -524,7 +526,7 @@ void EditorLayer::renderCanvas()
                         }
                         else if (target != start)
                         {
-                            auto path = routeDraft(m_project, *m_wireStart, m_wireBends, target);
+                            auto path = routeDraft(m_project, *m_wireStart, m_wireBends, target, m_schematicView);
                             if (path.size() >= 2)
                             {
                                 auto bends = std::vector<WirePoint>(path.begin() + 1, path.end());
@@ -546,7 +548,7 @@ void EditorLayer::renderCanvas()
                 const ImVec2 mouse = ImGui::GetMousePos();
                 for (auto wire = m_project.wires.rbegin(); wire != m_project.wires.rend(); ++wire)
                 {
-                    const auto path = wirePath(m_project, *wire);
+                    const auto path = wirePath(m_project, *wire, m_schematicView);
                     for (std::size_t i = 1; i + 1 < path.size(); ++i)
                     {
                         const ImVec2 p = toScreen(origin, path[i]);
@@ -577,7 +579,7 @@ void EditorLayer::renderCanvas()
                     [&](const Wire& w) { return w.id() == *m_selectedWireId; });
                 if (wire != m_project.wires.end())
                 {
-                    auto path = wirePath(m_project, *wire);
+                    auto path = wirePath(m_project, *wire, m_schematicView);
                     if (path.size() >= 2 && path.size() - 2 < Wire::maxBends)
                     {
                         const ImVec2 mouse = ImGui::GetMousePos();
@@ -649,7 +651,7 @@ void EditorLayer::renderCanvas()
                     {
                         wire->setBends(std::move(bends));
                         m_selectedWireCornerIndex.reset();
-                        const auto current = wirePath(m_project, *wire);
+                        const auto current = wirePath(m_project, *wire, m_schematicView);
                         for (std::size_t i = 1; i + 1 < current.size(); ++i)
                         {
                             if (current[i] == target)
@@ -666,7 +668,8 @@ void EditorLayer::renderCanvas()
             // The square at the positive terminal resizes symmetrically in grid steps.
             bool resizeStarted = false;
             if (!addedCorner && !cornerGrabbed && !m_wireCornerDrag &&
-                !m_simulationMode && !m_wireTool && !m_placementTool && m_dialog == DialogMode::None &&
+                !m_simulationMode && !m_wireTool && !m_placementTool &&
+                m_schematicView == SchematicView::MultiLine && m_dialog == DialogMode::None &&
                 hovered && m_selectedComponentId &&
                 ImGui::IsMouseClicked(ImGuiMouseButton_Left))
             {
@@ -744,11 +747,18 @@ void EditorLayer::renderCanvas()
                     const float cs = std::cos(radians), sn = std::sin(radians);
                     const float localX = dx * cs + dy * sn;
                     const float localY = -dx * sn + dy * cs;
+                    const bool single = m_schematicView == SchematicView::SingleLine &&
+                        it->type() != ElectricalComponentType::SupplyInput;
                     const float leftBound = it->type() == ElectricalComponentType::SupplyInput
                         ? -2.0f * ElectricalComponent::gridSize - 8.0f
-                        : -it->halfLengthPx() - 8.0f;
-                    if (localX >= leftBound && localX <= it->halfLengthPx() + 8.0f &&
-                        std::abs(localY) <= 24.0f)
+                        : single ? -24.0f : -it->halfLengthPx() - 8.0f;
+                    const float rightBound = single
+                        ? (it->type() == ElectricalComponentType::LightSwitch ? 34.0f : 24.0f)
+                        : it->halfLengthPx() + 8.0f;
+                    const float topBound = single &&
+                        it->type() == ElectricalComponentType::LightSwitch ? -34.0f : -24.0f;
+                    if (localX >= leftBound && localX <= rightBound &&
+                        localY >= topBound && localY <= 24.0f)
                     {
                         selectComponent(*it);
                         if (m_simulationMode)
@@ -819,7 +829,7 @@ void EditorLayer::renderCanvas()
                 const ImVec2 local(mouse.x - origin.x, mouse.y - origin.y);
                 for (auto it = m_project.wires.rbegin(); it != m_project.wires.rend(); ++it)
                 {
-                    const auto path = wirePath(m_project, *it);
+                    const auto path = wirePath(m_project, *it, m_schematicView);
                     bool hit = false;
                     for (std::size_t i = 1; i < path.size(); ++i)
                         if (pointSegmentDistanceSquared(local,
@@ -965,7 +975,7 @@ void EditorLayer::renderPropertiesPanel()
                          ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize |
                          ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings))
         {
-            auto path = wirePath(m_project, *it);
+            auto path = wirePath(m_project, *it, m_schematicView);
             if (m_selectedWireCornerIndex &&
                 (*m_selectedWireCornerIndex == 0 ||
                  *m_selectedWireCornerIndex + 1 >= path.size()))
@@ -1036,8 +1046,8 @@ void EditorLayer::renderPropertiesPanel()
                 ImGui::Spacing();
                 ImGui::Text("Bend points: %zu", path.size() >= 2 ? path.size() - 2 : 0);
                 ImGui::TextWrapped("Click a blue bend point to edit or delete it. Double-click a segment to add one.");
-                const ImVec2 a = resolveWireEndpoint(m_project, it->start());
-                const ImVec2 b = resolveWireEndpoint(m_project, it->end());
+                const ImVec2 a = resolveWireEndpoint(m_project, it->start(), m_schematicView);
+                const ImVec2 b = resolveWireEndpoint(m_project, it->end(), m_schematicView);
                 ImGui::Separator();
                 ImGui::TextDisabled("Start: (%.0f, %.0f)", a.x, a.y);
                 ImGui::TextDisabled("End:   (%.0f, %.0f)", b.x, b.y);
@@ -1118,22 +1128,25 @@ void EditorLayer::renderPropertiesPanel()
             m_dirty = true;
         }
 
-        const char* lengths[] = { "4 cells (80 px)", "6 cells (120 px)", "8 cells (160 px)",
-                                  "10 cells (200 px)", "12 cells (240 px)", "14 cells (280 px)",
-                                  "16 cells (320 px)" };
-        int lengthIndex = (component.lengthCells() - ElectricalComponent::minLengthCells) / 2;
-        if (ImGui::Combo("Terminal span", &lengthIndex, lengths, 7))
+        if (m_schematicView == SchematicView::SingleLine &&
+            component.type() != ElectricalComponentType::SupplyInput)
         {
-            component.setLengthCells(ElectricalComponent::minLengthCells + lengthIndex * 2);
-            m_dirty = true;
+            ImGui::TextDisabled("One shared schematic connection point.");
+            ImGui::TextDisabled("Physical terminal span is configured in multi-line view.");
         }
-        if (component.type() == ElectricalComponentType::LightSwitch)
-            ImGui::TextDisabled("Inner contacts: fixed 2-cell spacing.");
-        else if (component.type() == ElectricalComponentType::Lamp)
-            ImGui::TextDisabled("Lamp symbol: fixed 2-cell diameter.");
         else
-            ImGui::TextDisabled("IN block: fixed 2-cell width; one output terminal.");
-        ImGui::TextDisabled("Terminal span adjusts wire leads only.");
+        {
+            const char* lengths[] = { "4 cells (80 px)", "6 cells (120 px)", "8 cells (160 px)",
+                                      "10 cells (200 px)", "12 cells (240 px)", "14 cells (280 px)",
+                                      "16 cells (320 px)" };
+            int lengthIndex = (component.lengthCells() - ElectricalComponent::minLengthCells) / 2;
+            if (ImGui::Combo("Terminal span", &lengthIndex, lengths, 7))
+            {
+                component.setLengthCells(ElectricalComponent::minLengthCells + lengthIndex * 2);
+                m_dirty = true;
+            }
+            ImGui::TextDisabled("Terminal span adjusts the physical wire leads.");
+        }
 
         const char* rotations[] = { "0 deg", "90 deg", "180 deg", "270 deg" };
         int rotationIndex = component.rotation() / 90;

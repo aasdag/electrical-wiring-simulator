@@ -4,14 +4,15 @@
 #include <utility>
 #include <vector>
 
-// A free point is stored in canvas pixels. Attached endpoints keep a stable
-// component ID and terminal side, and resolve against the component at draw time.
+// Attached endpoints retain their component ID. Terminal 0 with a component ID
+// is a logical single-line anchor, not an actual electrical contact. +/-1 are
+// the physical terminals used in multi-line views.
 struct WireEndpoint
 {
     float x = 0.0f;
     float y = 0.0f;
     std::uint64_t componentId = 0;
-    int terminal = 0; // -1: negative terminal; +1: positive terminal; 0: free grid point.
+    int terminal = 0; // 0 = free grid point or logical anchor; +/-1 = physical terminal.
 };
 
 struct WirePoint

@@ -203,39 +203,27 @@ namespace
             return ImVec2(center.x + x * cs - y * sn,
                           center.y + x * sn + y * cs);
         };
-        const float halfSpan = component.halfLengthPx();
+        (void)resizeHandle;
         if (isSwitch)
         {
-            // One-pole switch: small ring and a diagonal arm, not an "S" box.
-            draw->AddLine(point(-halfSpan, 0), point(-8, 0), stroke, 2.2f);
-            draw->AddLine(point(8, 0), point(halfSpan, 0), stroke, 2.2f);
+            // One connection at the switch ring; no in/out lead stubs.
             draw->AddCircle(center, 8.0f, stroke, 0, 2.2f);
             draw->AddLine(point(5, -7), point(21, -29), stroke, 2.4f);
             draw->AddLine(point(21, -29), point(29, -25), stroke, 2.4f);
         }
         else
         {
-            // Lamp: free-standing X, without the box or detailed circle.
-            draw->AddLine(point(-halfSpan, 0), point(-16, 0), stroke, 2.2f);
-            draw->AddLine(point(16, 0), point(halfSpan, 0), stroke, 2.2f);
+            // Lamp: free-standing X with one logical anchor at its center.
             draw->AddLine(point(-16, -16), point(16, 16), stroke, 2.4f);
             draw->AddLine(point(-16, 16), point(16, -16), stroke, 2.4f);
         }
-        draw->AddCircleFilled(point(-halfSpan, 0), 3.0f, stroke);
-        draw->AddCircleFilled(point(halfSpan, 0), 3.0f, stroke);
         if (selected)
         {
-            const float extent = halfSpan + 8.0f;
-            draw->AddQuad(point(-extent, -34), point(extent, -34),
-                          point(extent, 24), point(-extent, 24),
+            const float right = isSwitch ? 34.0f : 24.0f;
+            const float top = isSwitch ? -34.0f : -24.0f;
+            draw->AddQuad(point(-24, top), point(right, top),
+                          point(right, 24), point(-24, 24),
                           IM_COL32(88, 191, 255, 255), 2.0f);
-            if (resizeHandle)
-            {
-                const ImVec2 pos = point(halfSpan + 9.0f, 0);
-                draw->AddRectFilled(ImVec2(pos.x - 6, pos.y - 6),
-                                    ImVec2(pos.x + 6, pos.y + 6),
-                                    IM_COL32(88, 191, 255, 255), 2.0f);
-            }
         }
         const std::string label = component.label().empty()
             ? std::string(isSwitch ? "S" : "H") + std::to_string(component.id())
@@ -245,6 +233,20 @@ namespace
                       stroke, label.c_str());
     }
 
+}
+
+ImVec2 ComponentRenderer::connectionPoint(const ElectricalComponent& component,
+                                          int terminal, SchematicView view)
+{
+    // 0 is a shared logical anchor, not a physical/electrical connection.
+    // Existing +/- terminals also collapse visually to this point in SingleLine.
+    const float radians = component.rotation() * (3.14159265f / 180.0f);
+    const float distance = component.type() == ElectricalComponentType::SupplyInput
+        ? component.halfLengthPx()
+        : (view == SchematicView::SingleLine || terminal == 0)
+          ? 0.0f : terminal * component.halfLengthPx();
+    return ImVec2(component.x() + distance * std::cos(radians),
+                  component.y() + distance * std::sin(radians));
 }
 
 void ComponentRenderer::draw(ImDrawList* draw, ImVec2 center,
