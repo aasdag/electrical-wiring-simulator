@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <system_error>
@@ -56,6 +57,24 @@ namespace
                           IM_COL32(230, 245, 255, 180), 1.5f);
         }
     }
+
+    // A small schematic-style single-pole light switch. Both saved and preview symbols
+    // are drawn from the same model coordinates.
+    void drawLightSwitch(ImDrawList* draw, ImVec2 center, std::uint64_t id, bool preview)
+    {
+        const ImU32 stroke = preview ? IM_COL32(90, 186, 255, 160) : IM_COL32(148, 217, 255, 255);
+        const ImU32 fill = preview ? IM_COL32(90, 186, 255, 110) : IM_COL32(45, 117, 177, 255);
+        const float x = center.x, y = center.y;
+        draw->AddLine(ImVec2(x - 34, y), ImVec2(x - 16, y), stroke, 2.2f);
+        draw->AddLine(ImVec2(x + 16, y), ImVec2(x + 34, y), stroke, 2.2f);
+        draw->AddCircleFilled(ImVec2(x - 14, y), 4.3f, fill);
+        draw->AddCircle(ImVec2(x - 14, y), 4.3f, stroke, 0, 1.8f);
+        draw->AddCircleFilled(ImVec2(x + 14, y), 4.3f, fill);
+        draw->AddCircle(ImVec2(x + 14, y), 4.3f, stroke, 0, 1.8f);
+        draw->AddLine(ImVec2(x - 11, y - 3), ImVec2(x + 7, y - 16), stroke, 2.4f);
+        const std::string label = "S" + std::to_string(id);
+        draw->AddText(ImVec2(x - 12, y + 12), stroke, label.c_str());
+    }
 }
 
 EditorLayer::EditorLayer()
@@ -76,12 +95,14 @@ void EditorLayer::onUpdate(float)
 
 void EditorLayer::onRender()
 {
-    DrawText("Electrical Wiring Simulator", 32, 55, 20, DARKGRAY);
+    // The canvas and component symbols are rendered by ImGui in onImGuiRender().
 }
 
 void EditorLayer::onImGuiRender()
 {
     renderMenuBar();
+    renderToolbox();
+    renderCanvas();
     renderWorkspace();
     renderFileDialog();
     renderConfirmations();
@@ -108,6 +129,7 @@ void EditorLayer::performAction(PendingAction action)
             m_dirty = false;
             copyText(m_name.data(), m_name.size(), m_project.name);
             m_notes.fill('\0');
+            m_placementTool.reset();
             break;
         case PendingAction::Open: showDialog(DialogMode::Open); break;
         case PendingAction::Exit: Core::Application::get().stop(); break;
@@ -147,11 +169,120 @@ void EditorLayer::renderMenuBar()
     }
 }
 
+void EditorLayer::renderToolbox()
+{
+    const ImGuiViewport* viewport = ImGui::GetMainViewport();
+    const float top = viewport->Pos.y + ImGui::GetFrameHeight();
+    ImGui::SetNextWindowPos(ImVec2(viewport->Pos.x, top), ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(viewport->Size.x, 62.0f), ImGuiCond_Always);
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.085f, 0.12f, 0.17f, 1.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(15, 12));
+    if (ImGui::Begin("##ComponentToolbox", nullptr,
+                     ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
+                     ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoSavedSettings))
+    {
+        if (m_dialog == DialogMode::None && ImGui::IsKeyPressed(ImGuiKey_Escape))
+            m_placementTool.reset();
+
+        ImGui::TextDisabled("TOOLBOX");
+        ImGui::SameLine(90.0f);
+        const bool placing = m_placementTool.has_value();
+        ImGui::PushStyleColor(ImGuiCol_Button, placing ? ImVec4(0.14f, 0.37f, 0.58f, 1.0f)
+                                                       : ImVec4(0.18f, 0.22f, 0.28f, 1.0f));
+        if (ImGui::Button("Light switch", ImVec2(146, 34)))
+        {
+            if (placing) m_placementTool.reset();
+            else m_placementTool = ElectricalComponentType::LightSwitch;
+        }
+        ImGui::PopStyleColor();
+        ImGui::SameLine();
+        ImGui::TextDisabled("%s", placing ? "Click on canvas to place  |  Esc to finish"
+                                          : "Select a component to start placing");
+        ImGui::SameLine();
+        ImGui::TextDisabled("  %zu placed", m_project.components.size());
+    }
+    ImGui::End();
+    ImGui::PopStyleVar();
+    ImGui::PopStyleColor();
+}
+
+void EditorLayer::renderCanvas()
+{
+    const ImGuiViewport* viewport = ImGui::GetMainViewport();
+    const float top = viewport->Pos.y + ImGui::GetFrameHeight() + 74.0f;
+    const float left = viewport->Pos.x + 314.0f;
+    const float width = std::max(110.0f, viewport->Size.x - 326.0f);
+    const float height = std::max(110.0f, viewport->Size.y - (top - viewport->Pos.y) - 12.0f);
+    ImGui::SetNextWindowPos(ImVec2(left, top), ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(width, height), ImGuiCond_Always);
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.08f, 0.11f, 0.16f, 1.0f));
+    if (ImGui::Begin("##DesignCanvas", nullptr,
+                     ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoResize |
+                     ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
+                     ImGuiWindowFlags_NoBringToFrontOnFocus))
+    {
+        ImGui::TextColored(ImVec4(0.63f, 0.77f, 0.89f, 1.0f), "DESIGN CANVAS");
+        ImGui::SameLine();
+        ImGui::TextDisabled("  Grid: 20 px");
+        ImGui::Separator();
+
+        const ImVec2 size = ImGui::GetContentRegionAvail();
+        if (size.x > 4.0f && size.y > 4.0f)
+        {
+            const ImVec2 origin = ImGui::GetCursorScreenPos();
+            const ImVec2 end(origin.x + size.x, origin.y + size.y);
+            const bool clicked = ImGui::InvisibleButton("##CanvasSurface", size);
+            const bool hovered = ImGui::IsItemHovered();
+            ImDrawList* draw = ImGui::GetWindowDrawList();
+            draw->AddRectFilled(origin, end, IM_COL32(21, 29, 42, 255));
+            draw->PushClipRect(origin, end, true);
+            for (float x = 0; x < size.x; x += 20.0f)
+                draw->AddLine(ImVec2(origin.x + x, origin.y),
+                              ImVec2(origin.x + x, end.y), IM_COL32(57, 70, 88, 120));
+            for (float y = 0; y < size.y; y += 20.0f)
+                draw->AddLine(ImVec2(origin.x, origin.y + y),
+                              ImVec2(end.x, origin.y + y), IM_COL32(57, 70, 88, 120));
+
+            for (const ElectricalComponent& component : m_project.components)
+            {
+                if (component.type() == ElectricalComponentType::LightSwitch)
+                    drawLightSwitch(draw, ImVec2(origin.x + component.x(),
+                                                 origin.y + component.y()), component.id(), false);
+            }
+
+            if (hovered && m_placementTool.has_value() && size.x >= 80.0f && size.y >= 80.0f)
+            {
+                const ImVec2 mouse = ImGui::GetMousePos();
+                const float x = std::clamp(std::round((mouse.x - origin.x) / 20.0f) * 20.0f,
+                                           40.0f, size.x - 40.0f);
+                const float y = std::clamp(std::round((mouse.y - origin.y) / 20.0f) * 20.0f,
+                                           30.0f, size.y - 30.0f);
+                drawLightSwitch(draw, ImVec2(origin.x + x, origin.y + y),
+                                m_project.nextComponentId, true);
+                ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+                if (clicked)
+                {
+                    m_project.addComponent(*m_placementTool, x, y);
+                    m_dirty = true;
+                }
+            }
+            draw->PopClipRect();
+        }
+    }
+    ImGui::End();
+    ImGui::PopStyleColor();
+}
+
 void EditorLayer::renderWorkspace()
 {
-    ImGui::SetNextWindowPos(ImVec2(24, 95), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSize(ImVec2(470, 280), ImGuiCond_FirstUseEver);
-    if (!ImGui::Begin("Project details")) { ImGui::End(); return; }
+    const ImGuiViewport* viewport = ImGui::GetMainViewport();
+    const float top = viewport->Pos.y + ImGui::GetFrameHeight() + 74.0f;
+    ImGui::SetNextWindowPos(ImVec2(viewport->Pos.x + 12.0f, top), ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(290.0f, std::max(240.0f,
+        viewport->Size.y - (top - viewport->Pos.y) - 12.0f)), ImGuiCond_Always);
+    if (!ImGui::Begin("Project details", nullptr,
+                       ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize |
+                       ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings)) { ImGui::End(); return; }
     ImGui::TextDisabled("PROJECT");
     ImGui::SameLine();
     if (m_dirty) ImGui::TextColored(ImVec4(0.96f, 0.69f, 0.28f, 1), "Unsaved changes");
@@ -166,6 +297,7 @@ void EditorLayer::renderWorkspace()
         m_project.notes = m_notes.data();
         m_dirty = true;
     }
+    ImGui::TextDisabled("Components: %zu", m_project.components.size());
     ImGui::TextDisabled("File: %s", m_projectPath.empty() ? "Not saved" : m_projectPath.string().c_str());
     if (ImGui::Button("Open project...")) requestAction(PendingAction::Open);
     ImGui::SameLine();
@@ -244,6 +376,7 @@ void EditorLayer::openProject(const fs::path& path)
     if (FileHandler::load(path, loaded, m_error))
     {
         m_project = std::move(loaded);
+        m_placementTool.reset();
         m_projectPath = path;
         m_dirty = false;
         copyText(m_name.data(), m_name.size(), m_project.name);

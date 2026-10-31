@@ -10,6 +10,7 @@ set(SOURCES
     Source/TestLayer.cpp
     Source/FileHandler.h
     Source/FileHandler.cpp
+    Source/ElectricalComponent.h
 )
 
 add_executable(ElectricalWiringSimulator)

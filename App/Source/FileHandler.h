@@ -1,12 +1,23 @@
 #pragma once
 
+#include "ElectricalComponent.h"
+
+#include <cstdint>
 #include <filesystem>
 #include <string>
+#include <vector>
 
 struct ProjectDocument
 {
     std::string name = "Untitled";
     std::string notes;
+    std::vector<ElectricalComponent> components;
+    std::uint64_t nextComponentId = 1;
+
+    void addComponent(ElectricalComponentType type, float x, float y)
+    {
+        components.emplace_back(nextComponentId++, type, x, y);
+    }
 };
 
 class FileHandler

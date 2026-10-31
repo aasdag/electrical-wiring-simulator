@@ -5,6 +5,7 @@
 
 #include <array>
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -23,6 +24,8 @@ private:
     enum class PendingAction { None, New, Open, Exit };
 
     void renderMenuBar();
+    void renderToolbox();
+    void renderCanvas();
     void renderWorkspace();
     void renderFileDialog();
     void renderConfirmations();
@@ -35,6 +38,7 @@ private:
     void performAction(PendingAction action);
 
     ProjectDocument m_project;
+    std::optional<ElectricalComponentType> m_placementTool;
     std::filesystem::path m_projectPath;
     std::filesystem::path m_directory;
     std::vector<std::filesystem::directory_entry> m_entries;
