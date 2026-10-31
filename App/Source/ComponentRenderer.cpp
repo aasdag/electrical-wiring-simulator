@@ -277,5 +277,5 @@ void ComponentRenderer::draw(ImDrawList* draw, ImVec2 center,
         drawLamp(draw, center, component, preview, selected, resizeHandle);
     else if (component.type() == ElectricalComponentType::SupplyInput)
         drawSupplyInput(draw, center, component, preview, selected, resizeHandle,
-                        view == SchematicView::MultiLine);
+                        view != SchematicView::SingleLine);
 }

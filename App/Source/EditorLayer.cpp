@@ -191,7 +191,7 @@ void EditorLayer::onImGuiRender()
         if (m_wireCornerDrag) cancelWireCornerDrag();
         else if (m_componentResize) cancelComponentResize();
         else if (m_componentDrag) cancelComponentDrag();
-        else if (m_simulationMode) setSimulationMode(false);
+        else if (inSimulation()) setSchematicView(m_lastEditingView);
         else if (m_wireTool) cancelWirePlacement();
         else if (m_placementTool) m_placementTool.reset();
         else if (ImGui::IsKeyPressed(ImGuiKey_Escape) && m_selectedWireCornerIndex)
@@ -233,7 +233,7 @@ void EditorLayer::performAction(PendingAction action)
             m_dirty = false;
             copyText(m_name.data(), m_name.size(), m_project.name);
             m_notes.fill('\0');
-            setSimulationMode(false);
+            setSchematicView(m_lastEditingView);
             break;
         case PendingAction::Open: showDialog(DialogMode::Open); break;
         case PendingAction::Exit: Core::Application::get().stop(); break;
@@ -262,10 +262,13 @@ void EditorLayer::renderMenuBar()
     {
         if (ImGui::MenuItem("Single-line", nullptr,
                             m_schematicView == SchematicView::SingleLine))
-            m_schematicView = SchematicView::SingleLine;
+            setSchematicView(SchematicView::SingleLine);
         if (ImGui::MenuItem("Multi-line (preview)", nullptr,
                             m_schematicView == SchematicView::MultiLine))
-            m_schematicView = SchematicView::MultiLine;
+            setSchematicView(SchematicView::MultiLine);
+        ImGui::Separator();
+        if (ImGui::MenuItem("Simulation", nullptr, inSimulation()))
+            setSchematicView(SchematicView::Simulation);
         ImGui::EndMenu();
     }
     ImGui::EndMainMenuBar();
@@ -295,10 +298,10 @@ void EditorLayer::renderToolbox()
                      ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
                      ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoSavedSettings))
     {
-        ImGui::TextDisabled(m_simulationMode ? "SIMULATION" : "TOOLBOX");
+        ImGui::TextDisabled(inSimulation() ? "SIMULATION" : "TOOLBOX");
         ImGui::SameLine(100.0f);
         const bool placing = m_placementTool.has_value();
-        ImGui::BeginDisabled(m_simulationMode);
+        ImGui::BeginDisabled(inSimulation());
         ImGui::PushStyleColor(ImGuiCol_Button, placing ? ImVec4(0.14f, 0.37f, 0.58f, 1.0f)
                                                        : ImVec4(0.18f, 0.22f, 0.28f, 1.0f));
         if (ImGui::Button("Light switch", ImVec2(146, 34)))
@@ -355,13 +358,13 @@ void EditorLayer::renderToolbox()
         }
         ImGui::EndDisabled();
         ImGui::SameLine();
-        ImGui::PushStyleColor(ImGuiCol_Button, m_simulationMode
+        ImGui::PushStyleColor(ImGuiCol_Button, inSimulation()
             ? ImVec4(0.58f, 0.23f, 0.23f, 1.0f) : ImVec4(0.11f, 0.39f, 0.29f, 1.0f));
-        if (ImGui::Button(m_simulationMode ? "Stop simulation" : "Start simulation", ImVec2(166, 34)))
-            setSimulationMode(!m_simulationMode);
+        if (ImGui::Button(inSimulation() ? "Stop simulation" : "Start simulation", ImVec2(166, 34)))
+            setSchematicView(inSimulation() ? m_lastEditingView : SchematicView::Simulation);
         ImGui::PopStyleColor();
         ImGui::SameLine();
-        ImGui::TextDisabled("%s", m_simulationMode
+        ImGui::TextDisabled("%s", inSimulation()
             ? "Click a switch to toggle  |  Esc / right-click to stop"
             : m_wireTool ? (m_wireStart ? "Click corners  |  Terminal or double-click: finish"
                                       : "Click start point  |  Esc to cancel")
@@ -389,13 +392,13 @@ void EditorLayer::renderCanvas()
                      ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
                      ImGuiWindowFlags_NoBringToFrontOnFocus))
     {
-        ImGui::TextColored(m_simulationMode ? ImVec4(0.37f, 0.88f, 0.62f, 1.0f)
+        ImGui::TextColored(inSimulation() ? ImVec4(0.37f, 0.88f, 0.62f, 1.0f)
                                            : ImVec4(0.63f, 0.77f, 0.89f, 1.0f),
-                           m_simulationMode ? "SIMULATION MODE" :
+                           inSimulation() ? "SIMULATION VIEW" :
                            m_schematicView == SchematicView::SingleLine
                                ? "SINGLE-LINE SCHEMATIC" : "MULTI-LINE SYMBOL PREVIEW");
         ImGui::SameLine();
-        ImGui::TextDisabled(m_simulationMode ? "  Click a switch to toggle" :
+        ImGui::TextDisabled(inSimulation() ? "  Click a switch to toggle" :
                             m_wireTool ? "  Click start and end points  |  Grid: 20 px" :
                                          "  Grid: 20 px  |  Drag a component to move");
         ImGui::Separator();
@@ -410,12 +413,15 @@ void EditorLayer::renderCanvas()
             ImDrawList* draw = ImGui::GetWindowDrawList();
             draw->AddRectFilled(origin, end, IM_COL32(21, 29, 42, 255));
             draw->PushClipRect(origin, end, true);
-            for (float x = 0; x < size.x; x += 20.0f)
-                draw->AddLine(ImVec2(origin.x + x, origin.y),
-                              ImVec2(origin.x + x, end.y), IM_COL32(57, 70, 88, 120));
-            for (float y = 0; y < size.y; y += 20.0f)
-                draw->AddLine(ImVec2(origin.x, origin.y + y),
-                              ImVec2(end.x, origin.y + y), IM_COL32(57, 70, 88, 120));
+            if (!inSimulation())
+            {
+                for (float x = 0; x < size.x; x += 20.0f)
+                    draw->AddLine(ImVec2(origin.x + x, origin.y),
+                                  ImVec2(origin.x + x, end.y), IM_COL32(57, 70, 88, 120));
+                for (float y = 0; y < size.y; y += 20.0f)
+                    draw->AddLine(ImVec2(origin.x, origin.y + y),
+                                  ImVec2(end.x, origin.y + y), IM_COL32(57, 70, 88, 120));
+            }
 
             // Every routed polyline remains one Wire, including all its corners.
             for (const Wire& wire : m_project.wires)
@@ -430,7 +436,7 @@ void EditorLayer::renderCanvas()
                     draw->AddCircleFilled(toScreen(origin, path.front()), 3.0f, color);
                     draw->AddCircleFilled(toScreen(origin, path.back()), 3.0f, color);
                 }
-                if (selected && !m_simulationMode && !m_wireTool)
+                if (selected && !inSimulation() && !m_wireTool)
                 {
                     for (std::size_t i = 1; i + 1 < path.size(); ++i)
                     {
@@ -483,7 +489,7 @@ void EditorLayer::renderCanvas()
                 return result;
             };
 
-            if (m_wireTool && !m_simulationMode && m_dialog == DialogMode::None && hovered)
+            if (m_wireTool && !inSimulation() && m_dialog == DialogMode::None && hovered)
             {
                 const WireEndpoint endpoint = snapEndpoint(ImGui::GetMousePos());
                 const WirePoint target{endpoint.x, endpoint.y};
@@ -541,7 +547,7 @@ void EditorLayer::renderCanvas()
             // Clicking an existing corner selects that point, not just its wire.
             // It also arms dragging, with movement only after the drag threshold.
             bool cornerGrabbed = false;
-            if (!m_simulationMode && !m_wireTool && !m_placementTool &&
+            if (!inSimulation() && !m_wireTool && !m_placementTool &&
                 m_dialog == DialogMode::None && hovered &&
                 ImGui::IsMouseClicked(ImGuiMouseButton_Left))
             {
@@ -571,7 +577,7 @@ void EditorLayer::renderCanvas()
 
             // Double-click a segment to add a point without creating a new wire.
             bool addedCorner = false;
-            if (!cornerGrabbed && !m_simulationMode && !m_wireTool && !m_placementTool &&
+            if (!cornerGrabbed && !inSimulation() && !m_wireTool && !m_placementTool &&
                 m_dialog == DialogMode::None && hovered && m_selectedWireId &&
                 ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
             {
@@ -668,7 +674,7 @@ void EditorLayer::renderCanvas()
             // The square at the positive terminal resizes symmetrically in grid steps.
             bool resizeStarted = false;
             if (!addedCorner && !cornerGrabbed && !m_wireCornerDrag &&
-                !m_simulationMode && !m_wireTool && !m_placementTool &&
+                !inSimulation() && !m_wireTool && !m_placementTool &&
                 m_schematicView == SchematicView::MultiLine && m_dialog == DialogMode::None &&
                 hovered && m_selectedComponentId &&
                 ImGui::IsMouseClicked(ImGuiMouseButton_Left))
@@ -732,8 +738,8 @@ void EditorLayer::renderCanvas()
             if (!addedCorner && !cornerGrabbed && !m_wireCornerDrag &&
                 !resizeStarted && !m_componentResize && !m_wireTool && !m_placementTool &&
                 m_dialog == DialogMode::None &&
-                ((m_simulationMode && clicked) ||
-                 (!m_simulationMode && hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left))))
+                ((inSimulation() && clicked) ||
+                 (!inSimulation() && hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left))))
             {
                 m_selectedComponentId.reset();
                 m_selectedWireId.reset();
@@ -761,7 +767,7 @@ void EditorLayer::renderCanvas()
                         localY >= topBound && localY <= 24.0f)
                     {
                         selectComponent(*it);
-                        if (m_simulationMode)
+                        if (inSimulation())
                         {
                             if (it->type() == ElectricalComponentType::LightSwitch &&
                                 !m_closedSwitches.erase(it->id()))
@@ -820,7 +826,7 @@ void EditorLayer::renderCanvas()
 
             // When no component was hit, allow selecting a line near the cursor.
             if (!addedCorner && !cornerGrabbed && !m_wireCornerDrag &&
-                !m_simulationMode && !m_wireTool && !m_placementTool &&
+                !inSimulation() && !m_wireTool && !m_placementTool &&
                 m_dialog == DialogMode::None && hovered &&
                 ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !m_selectedComponentId)
             {
@@ -852,10 +858,10 @@ void EditorLayer::renderCanvas()
                                                      origin.y + component.y()),
                                         component, m_schematicView, false,
                                         m_selectedComponentId == component.id(),
-                                        m_simulationMode && m_closedSwitches.contains(component.id()),
-                                        !m_simulationMode && !m_placementTool);
+                                        inSimulation() && m_closedSwitches.contains(component.id()),
+                                        !inSimulation() && !m_placementTool);
 
-            if (hovered && !m_simulationMode && m_placementTool.has_value() &&
+            if (hovered && !inSimulation() && m_placementTool.has_value() &&
                 size.x >= 80.0f && size.y >= 80.0f)
             {
                 const ImVec2 mouse = ImGui::GetMousePos();
@@ -930,18 +936,28 @@ void EditorLayer::cancelWirePlacement()
     m_wireTool = false;
 }
 
-void EditorLayer::setSimulationMode(bool enabled)
+void EditorLayer::setSchematicView(SchematicView view)
 {
+    if (view == m_schematicView) return;
+
     cancelWireCornerDrag();
     cancelWirePlacement();
-    m_selectedWireId.reset();
-    m_selectedWireCornerIndex.reset();
     cancelComponentDrag();
     cancelComponentResize();
-    m_simulationMode = enabled;
-    m_closedSwitches.clear(); // Simulation states are transient and never saved.
     m_placementTool.reset();
-    m_selectedComponentId.reset();
+    m_selectedWireCornerIndex.reset();
+
+    // Entering or leaving simulation resets only transient interaction state.
+    // The project, its component positions and connections are untouched.
+    if (view == SchematicView::Simulation || inSimulation())
+    {
+        m_selectedWireId.reset();
+        m_selectedComponentId.reset();
+        m_closedSwitches.clear();
+    }
+    if (view != SchematicView::Simulation)
+        m_lastEditingView = view;
+    m_schematicView = view;
 }
 
 void EditorLayer::selectComponent(const ElectricalComponent& component)
@@ -995,7 +1011,7 @@ void EditorLayer::renderPropertiesPanel()
                 ImGui::TextDisabled("Drag the highlighted point to reposition it.");
                 ImGui::Spacing();
 
-                ImGui::BeginDisabled(m_simulationMode);
+                ImGui::BeginDisabled(inSimulation());
                 if (ImGui::Button("Delete bend point"))
                 {
                     const WirePoint removed = path[pointIndex];
@@ -1034,7 +1050,7 @@ void EditorLayer::renderPropertiesPanel()
                 ImGui::TextColored(ImVec4(0.46f, 0.73f, 1.0f, 1.0f), "WIRE PROPERTIES");
                 ImGui::Separator();
                 ImGui::TextDisabled("ID: %llu", static_cast<unsigned long long>(it->id()));
-                ImGui::BeginDisabled(m_simulationMode);
+                ImGui::BeginDisabled(inSimulation());
                 int conductors = it->conductors();
                 if (ImGui::InputInt("Conductors", &conductors))
                 {
@@ -1089,7 +1105,7 @@ void EditorLayer::renderPropertiesPanel()
             ? "Lamp" : "Light switch");
         ImGui::TextDisabled("ID: %llu", static_cast<unsigned long long>(component.id()));
         ImGui::Spacing();
-        if (m_simulationMode)
+        if (inSimulation())
         {
             if (component.type() == ElectricalComponentType::LightSwitch)
             {
@@ -1106,7 +1122,7 @@ void EditorLayer::renderPropertiesPanel()
             ImGui::Separator();
         }
 
-        ImGui::BeginDisabled(m_simulationMode);
+        ImGui::BeginDisabled(inSimulation());
         if (ImGui::InputText("Name", m_componentLabel.data(), m_componentLabel.size()))
         {
             component.setLabel(m_componentLabel.data());
@@ -1204,7 +1220,7 @@ void EditorLayer::renderPropertiesPanel()
         ImGui::EndDisabled();
         ImGui::Spacing();
         ImGui::Separator();
-        ImGui::TextDisabled("%s", m_simulationMode
+        ImGui::TextDisabled("%s", inSimulation()
             ? (component.type() == ElectricalComponentType::SupplyInput
                 ? "Source state requires circuit simulation."
                 : component.type() == ElectricalComponentType::Lamp
@@ -1230,7 +1246,7 @@ void EditorLayer::renderWorkspace()
     ImGui::SameLine();
     if (m_dirty) ImGui::TextColored(ImVec4(0.96f, 0.69f, 0.28f, 1), "Unsaved changes");
     else ImGui::TextDisabled("Saved");
-    ImGui::BeginDisabled(m_simulationMode);
+    ImGui::BeginDisabled(inSimulation());
     if (ImGui::InputText("Name", m_name.data(), m_name.size()))
     {
         m_project.name = m_name.data();
@@ -1330,7 +1346,7 @@ void EditorLayer::openProject(const fs::path& path)
     if (FileHandler::load(path, loaded, m_error))
     {
         m_project = std::move(loaded);
-        setSimulationMode(false);
+        setSchematicView(m_lastEditingView);
         m_projectPath = path;
         m_dirty = false;
         copyText(m_name.data(), m_name.size(), m_project.name);

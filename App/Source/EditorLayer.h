@@ -70,7 +70,8 @@ private:
     void requestAction(PendingAction action);
     void performAction(PendingAction action);
     void selectComponent(const ElectricalComponent& component);
-    void setSimulationMode(bool enabled);
+    void setSchematicView(SchematicView view);
+    [[nodiscard]] bool inSimulation() const { return m_schematicView == SchematicView::Simulation; }
     void cancelWirePlacement();
 
     ProjectDocument m_project;
@@ -85,7 +86,7 @@ private:
     std::optional<ComponentDrag> m_componentDrag;
     std::optional<ComponentResize> m_componentResize;
     SchematicView m_schematicView = SchematicView::SingleLine;
-    bool m_simulationMode = false;
+    SchematicView m_lastEditingView = SchematicView::SingleLine;
     std::unordered_set<std::uint64_t> m_closedSwitches;
     std::array<char, 64> m_componentLabel{};
     std::filesystem::path m_projectPath;

@@ -6,7 +6,7 @@ struct ImDrawList;
 struct ImVec2;
 
 // Switching view only changes rendering; never component or wire data.
-enum class SchematicView { SingleLine, MultiLine };
+enum class SchematicView { SingleLine, MultiLine, Simulation };
 
 namespace ComponentRenderer
 {
