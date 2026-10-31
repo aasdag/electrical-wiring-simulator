@@ -76,17 +76,20 @@ namespace
                           center.y + x * sn + y * cs);
         };
 
+        // The switch mechanism has a fixed 2-cell contact spacing.
+        // Only the wire stubs to the outer terminals change with terminal span.
+        const float contactOffset = static_cast<float>(ElectricalComponent::gridSize);
         const float halfLength = component.halfLengthPx();
-        // Terminals sit at +/- N * gridSize (even length cell counts).
-        draw->AddLine(point(-halfLength, 0), point(-16, 0), stroke, 2.2f);
-        draw->AddLine(point(16, 0), point(halfLength, 0), stroke, 2.2f);
+        draw->AddLine(point(-halfLength, 0), point(-contactOffset, 0), stroke, 2.2f);
+        draw->AddLine(point(contactOffset, 0), point(halfLength, 0), stroke, 2.2f);
         draw->AddCircleFilled(point(-halfLength, 0), 3.0f, stroke);
         draw->AddCircleFilled(point(halfLength, 0), 3.0f, stroke);
-        draw->AddCircleFilled(point(-14, 0), 4.3f, fill);
-        draw->AddCircle(point(-14, 0), 4.3f, stroke, 0, 1.8f);
-        draw->AddCircleFilled(point(14, 0), 4.3f, fill);
-        draw->AddCircle(point(14, 0), 4.3f, stroke, 0, 1.8f);
-        draw->AddLine(point(-11, -3), closed ? point(11, 0) : point(7, -16),
+        draw->AddCircleFilled(point(-contactOffset, 0), 4.3f, fill);
+        draw->AddCircle(point(-contactOffset, 0), 4.3f, stroke, 0, 1.8f);
+        draw->AddCircleFilled(point(contactOffset, 0), 4.3f, fill);
+        draw->AddCircle(point(contactOffset, 0), 4.3f, stroke, 0, 1.8f);
+        draw->AddLine(point(-contactOffset, 0),
+                      closed ? point(contactOffset, 0) : point(contactOffset - 8.0f, -16.0f),
                       stroke, 2.4f);
 
         if (selected)
@@ -564,13 +567,18 @@ void EditorLayer::renderPropertiesPanel()
             m_dirty = true;
         }
 
-        float x = component.x(), y = component.y();
-        bool moved = ImGui::DragFloat("X", &x, 1.0f, 0.0f, 1000000.0f, "%.0f px");
-        moved |= ImGui::DragFloat("Y", &y, 1.0f, 0.0f, 1000000.0f, "%.0f px");
-        if (moved && std::isfinite(x) && std::isfinite(y))
+        // Edit position in grid cells, preventing free-pixel coordinates from
+        // moving the switch contacts away from their grid intersections.
+        constexpr int grid = ElectricalComponent::gridSize;
+        constexpr int maxCell = 1000000 / grid;
+        int xCell = static_cast<int>(std::round(component.x() / grid));
+        int yCell = static_cast<int>(std::round(component.y() / grid));
+        bool moved = ImGui::DragInt("X (cells)", &xCell, 0.2f, 0, maxCell);
+        moved |= ImGui::DragInt("Y (cells)", &yCell, 0.2f, 0, maxCell);
+        if (moved)
         {
-            component.setPosition(std::clamp(x, 0.0f, 1000000.0f),
-                                  std::clamp(y, 0.0f, 1000000.0f));
+            component.setPosition(static_cast<float>(std::clamp(xCell, 0, maxCell) * grid),
+                                  static_cast<float>(std::clamp(yCell, 0, maxCell) * grid));
             m_dirty = true;
         }
 
@@ -578,12 +586,13 @@ void EditorLayer::renderPropertiesPanel()
                                   "10 cells (200 px)", "12 cells (240 px)", "14 cells (280 px)",
                                   "16 cells (320 px)" };
         int lengthIndex = (component.lengthCells() - ElectricalComponent::minLengthCells) / 2;
-        if (ImGui::Combo("Length", &lengthIndex, lengths, 7))
+        if (ImGui::Combo("Terminal span", &lengthIndex, lengths, 7))
         {
             component.setLengthCells(ElectricalComponent::minLengthCells + lengthIndex * 2);
             m_dirty = true;
         }
-        ImGui::TextDisabled("Terminals align with grid when center is on-grid.");
+        ImGui::TextDisabled("Inner contacts: fixed 2-cell spacing.");
+        ImGui::TextDisabled("Terminal span adjusts wire stubs only.");
 
         const char* rotations[] = { "0 deg", "90 deg", "180 deg", "270 deg" };
         int rotationIndex = component.rotation() / 90;
