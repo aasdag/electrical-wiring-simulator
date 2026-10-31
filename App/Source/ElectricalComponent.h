@@ -7,7 +7,8 @@
 // Positions are in canvas coordinates (pixels), independent of the UI window position.
 enum class ElectricalComponentType : int
 {
-    LightSwitch = 1
+    LightSwitch = 1,
+    Lamp = 2
 };
 
 class ElectricalComponent

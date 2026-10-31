@@ -214,6 +214,65 @@ namespace
         draw->AddText(ImVec2(center.x - labelWidth * 0.5f, center.y + 16.0f),
                       stroke, label.c_str());
     }
+
+    // IEC-style lamp: a circle with a diagonal cross. Its symbol stays fixed at
+    // one grid cell radius; only the terminal leads vary with the configured span.
+    void drawLamp(ImDrawList* draw, ImVec2 center,
+                  const ElectricalComponent& component, bool preview,
+                  bool selected = false, bool resizeHandle = false)
+    {
+        const ImU32 stroke = preview ? IM_COL32(90, 186, 255, 160)
+                                     : IM_COL32(148, 217, 255, 255);
+        const float angle = component.rotation() * (3.14159265f / 180.0f);
+        const float cs = std::cos(angle), sn = std::sin(angle);
+        const auto point = [&](float x, float y) {
+            return ImVec2(center.x + x * cs - y * sn,
+                          center.y + x * sn + y * cs);
+        };
+
+        const float radius = static_cast<float>(ElectricalComponent::gridSize);
+        const float halfLength = component.halfLengthPx();
+        const float diagonal = radius * 0.70710678f;
+        draw->AddLine(point(-halfLength, 0), point(-radius, 0), stroke, 2.2f);
+        draw->AddLine(point(radius, 0), point(halfLength, 0), stroke, 2.2f);
+        draw->AddCircle(center, radius, stroke, 0, 2.2f);
+        draw->AddLine(point(-diagonal, -diagonal), point(diagonal, diagonal), stroke, 2.0f);
+        draw->AddLine(point(-diagonal, diagonal), point(diagonal, -diagonal), stroke, 2.0f);
+        draw->AddCircleFilled(point(-halfLength, 0), 3.0f, stroke);
+        draw->AddCircleFilled(point(halfLength, 0), 3.0f, stroke);
+
+        if (selected)
+        {
+            const float outline = halfLength + 8.0f;
+            draw->AddQuad(point(-outline, -24), point(outline, -24),
+                          point(outline, 24), point(-outline, 24),
+                          IM_COL32(88, 191, 255, 255), 2.0f);
+            if (resizeHandle)
+            {
+                const ImVec2 handle = point(halfLength + 9.0f, 0);
+                draw->AddRectFilled(ImVec2(handle.x - 6, handle.y - 6),
+                                    ImVec2(handle.x + 6, handle.y + 6),
+                                    IM_COL32(88, 191, 255, 255), 2.0f);
+            }
+        }
+
+        const std::string label = component.label().empty()
+            ? "H" + std::to_string(component.id()) : component.label();
+        const float labelWidth = ImGui::CalcTextSize(label.c_str()).x;
+        draw->AddText(ImVec2(center.x - labelWidth * 0.5f, center.y + 24.0f),
+                      stroke, label.c_str());
+    }
+
+    void drawComponent(ImDrawList* draw, ImVec2 center,
+                       const ElectricalComponent& component, bool preview,
+                       bool selected = false, bool closed = false,
+                       bool resizeHandle = false)
+    {
+        if (component.type() == ElectricalComponentType::LightSwitch)
+            drawLightSwitch(draw, center, component, preview, selected, closed, resizeHandle);
+        else if (component.type() == ElectricalComponentType::Lamp)
+            drawLamp(draw, center, component, preview, selected, resizeHandle);
+    }
 }
 
 EditorLayer::EditorLayer()
@@ -349,7 +408,8 @@ void EditorLayer::renderToolbox()
                                                        : ImVec4(0.18f, 0.22f, 0.28f, 1.0f));
         if (ImGui::Button("Light switch", ImVec2(146, 34)))
         {
-            if (placing) m_placementTool.reset();
+            if (m_placementTool == ElectricalComponentType::LightSwitch)
+                m_placementTool.reset();
             else
             {
                 cancelWirePlacement();
@@ -359,6 +419,19 @@ void EditorLayer::renderToolbox()
             }
         }
         ImGui::PopStyleColor();
+        ImGui::SameLine();
+        if (ImGui::Button("Lamp", ImVec2(90, 34)))
+        {
+            if (m_placementTool == ElectricalComponentType::Lamp)
+                m_placementTool.reset();
+            else
+            {
+                cancelWirePlacement();
+                m_placementTool = ElectricalComponentType::Lamp;
+                m_selectedWireId.reset();
+                m_selectedWireCornerIndex.reset();
+            }
+        }
         ImGui::SameLine();
         if (ImGui::Button(m_wireTool ? "Wire [active]" : "Wire", ImVec2(112, 34)))
         {
@@ -762,7 +835,8 @@ void EditorLayer::renderCanvas()
                         selectComponent(*it);
                         if (m_simulationMode)
                         {
-                            if (!m_closedSwitches.erase(it->id()))
+                            if (it->type() == ElectricalComponentType::LightSwitch &&
+                                !m_closedSwitches.erase(it->id()))
                                 m_closedSwitches.insert(it->id());
                         }
                         else
@@ -846,14 +920,11 @@ void EditorLayer::renderCanvas()
             }
 
             for (const ElectricalComponent& component : m_project.components)
-            {
-                if (component.type() == ElectricalComponentType::LightSwitch)
-                    drawLightSwitch(draw, ImVec2(origin.x + component.x(),
-                                                 origin.y + component.y()), component, false,
-                                    m_selectedComponentId == component.id(),
-                                    m_simulationMode && m_closedSwitches.contains(component.id()),
-                                    !m_simulationMode && !m_placementTool);
-            }
+                drawComponent(draw, ImVec2(origin.x + component.x(),
+                                           origin.y + component.y()), component, false,
+                              m_selectedComponentId == component.id(),
+                              m_simulationMode && m_closedSwitches.contains(component.id()),
+                              !m_simulationMode && !m_placementTool);
 
             if (hovered && !m_simulationMode && m_placementTool.has_value() &&
                 size.x >= 80.0f && size.y >= 80.0f)
@@ -864,7 +935,7 @@ void EditorLayer::renderCanvas()
                 const float y = std::clamp(std::round((mouse.y - origin.y) / 20.0f) * 20.0f,
                                            30.0f, size.y - 30.0f);
                 const ElectricalComponent preview(m_project.nextComponentId, *m_placementTool, x, y);
-                drawLightSwitch(draw, ImVec2(origin.x + x, origin.y + y), preview, true);
+                drawComponent(draw, ImVec2(origin.x + x, origin.y + y), preview, true);
                 ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
                 if (clicked)
                 {
@@ -1083,16 +1154,22 @@ void EditorLayer::renderPropertiesPanel()
     {
         ImGui::TextColored(ImVec4(0.46f, 0.73f, 1.0f, 1.0f), "COMPONENT PROPERTIES");
         ImGui::Separator();
-        ImGui::TextUnformatted("Light switch");
+        ImGui::TextUnformatted(component.type() == ElectricalComponentType::Lamp
+                                 ? "Lamp" : "Light switch");
         ImGui::TextDisabled("ID: %llu", static_cast<unsigned long long>(component.id()));
         ImGui::Spacing();
         if (m_simulationMode)
         {
-            const bool closed = m_closedSwitches.contains(component.id());
-            ImGui::TextColored(closed ? ImVec4(0.37f, 0.88f, 0.62f, 1.0f)
-                                    : ImVec4(0.96f, 0.72f, 0.42f, 1.0f),
-                               "Contact: %s", closed ? "CLOSED" : "OPEN");
-            ImGui::TextDisabled("Click the switch to change its state.");
+            if (component.type() == ElectricalComponentType::LightSwitch)
+            {
+                const bool closed = m_closedSwitches.contains(component.id());
+                ImGui::TextColored(closed ? ImVec4(0.37f, 0.88f, 0.62f, 1.0f)
+                                        : ImVec4(0.96f, 0.72f, 0.42f, 1.0f),
+                                   "Contact: %s", closed ? "CLOSED" : "OPEN");
+                ImGui::TextDisabled("Click the switch to change its state.");
+            }
+            else
+                ImGui::TextDisabled("Lamp power simulation is not implemented yet.");
             ImGui::Separator();
         }
 
@@ -1127,8 +1204,11 @@ void EditorLayer::renderPropertiesPanel()
             component.setLengthCells(ElectricalComponent::minLengthCells + lengthIndex * 2);
             m_dirty = true;
         }
-        ImGui::TextDisabled("Inner contacts: fixed 2-cell spacing.");
-        ImGui::TextDisabled("Terminal span adjusts wire stubs only.");
+        if (component.type() == ElectricalComponentType::LightSwitch)
+            ImGui::TextDisabled("Inner contacts: fixed 2-cell spacing.");
+        else
+            ImGui::TextDisabled("Lamp symbol: fixed 2-cell diameter.");
+        ImGui::TextDisabled("Terminal span adjusts wire leads only.");
 
         const char* rotations[] = { "0 deg", "90 deg", "180 deg", "270 deg" };
         int rotationIndex = component.rotation() / 90;
@@ -1141,8 +1221,10 @@ void EditorLayer::renderPropertiesPanel()
         ImGui::EndDisabled();
         ImGui::Spacing();
         ImGui::Separator();
-        ImGui::TextDisabled("%s", m_simulationMode ? "Switch state is not saved."
-                                                  : "Changes are saved with the project.");
+        ImGui::TextDisabled("%s", m_simulationMode
+            ? (component.type() == ElectricalComponentType::Lamp
+                ? "Lamp state requires circuit simulation." : "Switch state is not saved.")
+            : "Changes are saved with the project.");
         if (ImGui::Button("Deselect")) m_selectedComponentId.reset();
     }
     ImGui::End();

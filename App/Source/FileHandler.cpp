@@ -30,7 +30,8 @@ namespace
         std::unordered_set<std::uint64_t> ids;
         for (const ElectricalComponent& component : project.components)
         {
-            if (component.type() != ElectricalComponentType::LightSwitch ||
+            if ((component.type() != ElectricalComponentType::LightSwitch &&
+             component.type() != ElectricalComponentType::Lamp) ||
                 component.id() == 0 || component.id() == std::numeric_limits<std::uint64_t>::max() ||
                 !std::isfinite(component.x()) || !std::isfinite(component.y()) ||
                 component.x() < 0 || component.y() < 0 ||
@@ -190,7 +191,8 @@ bool FileHandler::load(const std::filesystem::path& path, ProjectDocument& proje
     }
 
     if (magic == "EWS_PROJECT 2" || magic == "EWS_PROJECT 3" ||
-        magic == "EWS_PROJECT 4" || magic == "EWS_PROJECT 5")
+        magic == "EWS_PROJECT 4" || magic == "EWS_PROJECT 5" ||
+        magic == "EWS_PROJECT 6")
     {
         std::size_t count = 0;
         if (!(stream >> count) || count > maxComponents)
@@ -204,7 +206,8 @@ bool FileHandler::load(const std::filesystem::path& path, ProjectDocument& proje
             int type = 0;
             float x = 0, y = 0;
             if (!(stream >> id >> type >> x >> y) ||
-                type != static_cast<int>(ElectricalComponentType::LightSwitch))
+                (type != static_cast<int>(ElectricalComponentType::LightSwitch) &&
+                 type != static_cast<int>(ElectricalComponentType::Lamp)))
             {
                 error = "Invalid electrical component data.";
                 return false;
@@ -212,14 +215,16 @@ bool FileHandler::load(const std::filesystem::path& path, ProjectDocument& proje
 
             int rotation = 0;
             std::string label;
-            if ((magic == "EWS_PROJECT 3" || magic == "EWS_PROJECT 4" || magic == "EWS_PROJECT 5") &&
+            if ((magic == "EWS_PROJECT 3" || magic == "EWS_PROJECT 4" ||
+                 magic == "EWS_PROJECT 5" || magic == "EWS_PROJECT 6") &&
                 !(stream >> rotation >> std::quoted(label)))
             {
                 error = "Invalid component properties.";
                 return false;
             }
             int lengthCells = ElectricalComponent::defaultLengthCells;
-            if ((magic == "EWS_PROJECT 4" || magic == "EWS_PROJECT 5") && !(stream >> lengthCells))
+            if ((magic == "EWS_PROJECT 4" || magic == "EWS_PROJECT 5" ||
+                 magic == "EWS_PROJECT 6") && !(stream >> lengthCells))
             {
                 error = "Invalid component length.";
                 return false;
