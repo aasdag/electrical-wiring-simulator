@@ -34,6 +34,7 @@ namespace
                 component.x() < 0 || component.y() < 0 ||
                 component.x() > 1000000 || component.y() > 1000000 ||
                 component.label().size() > 63 ||
+                !ElectricalComponent::validLength(component.lengthCells()) ||
                 (component.rotation() != 0 && component.rotation() != 90 &&
                  component.rotation() != 180 && component.rotation() != 270) ||
                 !ids.insert(component.id()).second)
@@ -62,7 +63,7 @@ bool FileHandler::save(const std::filesystem::path& path, const ProjectDocument&
             return false;
         }
 
-        stream << "EWS_PROJECT 3\n" << std::quoted(project.name) << '\n'
+        stream << "EWS_PROJECT 4\n" << std::quoted(project.name) << '\n'
                << std::quoted(project.notes) << '\n'
                << project.components.size() << '\n'
                << std::setprecision(std::numeric_limits<float>::max_digits10);
@@ -70,7 +71,8 @@ bool FileHandler::save(const std::filesystem::path& path, const ProjectDocument&
         {
             stream << component.id() << ' ' << static_cast<int>(component.type()) << ' '
                    << component.x() << ' ' << component.y() << ' '
-                   << component.rotation() << ' ' << std::quoted(component.label()) << '\n';
+                   << component.rotation() << ' ' << std::quoted(component.label()) << ' '
+                   << component.lengthCells() << '\n';
         }
         stream.flush();
         if (!stream)
@@ -124,7 +126,7 @@ bool FileHandler::load(const std::filesystem::path& path, ProjectDocument& proje
     ProjectDocument parsed;
     if (!stream || !std::getline(stream, magic) ||
         (magic != "EWS_PROJECT 1" && magic != "EWS_PROJECT 2" &&
-         magic != "EWS_PROJECT 3"))
+         magic != "EWS_PROJECT 3" && magic != "EWS_PROJECT 4"))
     {
         error = "Not a supported EWS project.";
         return false;
@@ -136,7 +138,8 @@ bool FileHandler::load(const std::filesystem::path& path, ProjectDocument& proje
         return false;
     }
 
-    if (magic == "EWS_PROJECT 2" || magic == "EWS_PROJECT 3")
+    if (magic == "EWS_PROJECT 2" || magic == "EWS_PROJECT 3" ||
+        magic == "EWS_PROJECT 4")
     {
         std::size_t count = 0;
         if (!(stream >> count) || count > maxComponents)
@@ -158,14 +161,20 @@ bool FileHandler::load(const std::filesystem::path& path, ProjectDocument& proje
 
             int rotation = 0;
             std::string label;
-            if (magic == "EWS_PROJECT 3" &&
+            if ((magic == "EWS_PROJECT 3" || magic == "EWS_PROJECT 4") &&
                 !(stream >> rotation >> std::quoted(label)))
             {
                 error = "Invalid component properties.";
                 return false;
             }
+            int lengthCells = ElectricalComponent::defaultLengthCells;
+            if (magic == "EWS_PROJECT 4" && !(stream >> lengthCells))
+            {
+                error = "Invalid component length.";
+                return false;
+            }
             parsed.components.emplace_back(id, static_cast<ElectricalComponentType>(type),
-                                           x, y, std::move(label), rotation);
+                                           x, y, std::move(label), rotation, lengthCells);
             if (id < std::numeric_limits<std::uint64_t>::max())
                 parsed.nextComponentId = std::max(parsed.nextComponentId, id + 1);
         }

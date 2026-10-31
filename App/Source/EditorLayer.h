@@ -24,6 +24,13 @@ private:
     enum class DialogMode { None, Open, Save };
     enum class PendingAction { None, New, Open, Exit };
 
+    struct ComponentResize
+    {
+        std::uint64_t id;
+        int startLengthCells;
+        bool wasDirty;
+    };
+
     struct ComponentDrag
     {
         std::uint64_t id;
@@ -35,6 +42,7 @@ private:
     };
 
     void cancelComponentDrag();
+    void cancelComponentResize();
     void renderMenuBar();
     void renderToolbox();
     void renderCanvas();
@@ -56,6 +64,7 @@ private:
     std::optional<ElectricalComponentType> m_placementTool;
     std::optional<std::uint64_t> m_selectedComponentId;
     std::optional<ComponentDrag> m_componentDrag;
+    std::optional<ComponentResize> m_componentResize;
     bool m_simulationMode = false;
     std::unordered_set<std::uint64_t> m_closedSwitches;
     std::array<char, 64> m_componentLabel{};

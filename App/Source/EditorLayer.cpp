@@ -61,7 +61,7 @@ namespace
     // A single-pole light-switch symbol in canvas coordinates, rotated around its center.
     void drawLightSwitch(ImDrawList* draw, ImVec2 center,
                          const ElectricalComponent& component, bool preview, bool selected = false,
-                         bool closed = false)
+                         bool closed = false, bool resizeHandle = false)
     {
         const ImU32 stroke = preview ? IM_COL32(90, 186, 255, 160)
                                    : closed ? IM_COL32(95, 225, 161, 255)
@@ -76,8 +76,12 @@ namespace
                           center.y + x * sn + y * cs);
         };
 
-        draw->AddLine(point(-34, 0), point(-16, 0), stroke, 2.2f);
-        draw->AddLine(point(16, 0), point(34, 0), stroke, 2.2f);
+        const float halfLength = component.halfLengthPx();
+        // Terminals sit at +/- N * gridSize (even length cell counts).
+        draw->AddLine(point(-halfLength, 0), point(-16, 0), stroke, 2.2f);
+        draw->AddLine(point(16, 0), point(halfLength, 0), stroke, 2.2f);
+        draw->AddCircleFilled(point(-halfLength, 0), 3.0f, stroke);
+        draw->AddCircleFilled(point(halfLength, 0), 3.0f, stroke);
         draw->AddCircleFilled(point(-14, 0), 4.3f, fill);
         draw->AddCircle(point(-14, 0), 4.3f, stroke, 0, 1.8f);
         draw->AddCircleFilled(point(14, 0), 4.3f, fill);
@@ -86,8 +90,19 @@ namespace
                       stroke, 2.4f);
 
         if (selected)
-            draw->AddQuad(point(-42, -24), point(42, -24), point(42, 24), point(-42, 24),
+        {
+            const float outline = halfLength + 8.0f;
+            draw->AddQuad(point(-outline, -24), point(outline, -24),
+                          point(outline, 24), point(-outline, 24),
                           IM_COL32(88, 191, 255, 255), 2.0f);
+            if (resizeHandle)
+            {
+                const ImVec2 handle = point(halfLength + 9.0f, 0);
+                draw->AddRectFilled(ImVec2(handle.x - 6, handle.y - 6),
+                                    ImVec2(handle.x + 6, handle.y + 6),
+                                    IM_COL32(88, 191, 255, 255), 2.0f);
+            }
+        }
 
         const std::string label = component.label().empty()
             ? "S" + std::to_string(component.id()) : component.label();
@@ -125,7 +140,8 @@ void EditorLayer::onImGuiRender()
         (ImGui::IsKeyPressed(ImGuiKey_Escape) ||
          ImGui::IsMouseClicked(ImGuiMouseButton_Right)))
     {
-        if (m_componentDrag) cancelComponentDrag();
+        if (m_componentResize) cancelComponentResize();
+        else if (m_componentDrag) cancelComponentDrag();
         else if (m_simulationMode) setSimulationMode(false);
         else if (m_placementTool) m_placementTool.reset();
         else if (ImGui::IsKeyPressed(ImGuiKey_Escape)) m_selectedComponentId.reset();
@@ -153,6 +169,7 @@ void EditorLayer::requestAction(PendingAction action)
 void EditorLayer::performAction(PendingAction action)
 {
     cancelComponentDrag();
+    cancelComponentResize();
     m_pending = PendingAction::None;
     switch (action)
     {
@@ -285,8 +302,70 @@ void EditorLayer::renderCanvas()
                 draw->AddLine(ImVec2(origin.x, origin.y + y),
                               ImVec2(end.x, origin.y + y), IM_COL32(57, 70, 88, 120));
 
+            // The square at the positive terminal resizes symmetrically in grid steps.
+            bool resizeStarted = false;
+            if (!m_simulationMode && !m_placementTool && m_dialog == DialogMode::None &&
+                hovered && m_selectedComponentId &&
+                ImGui::IsMouseClicked(ImGuiMouseButton_Left))
+            {
+                const auto selected = std::find_if(m_project.components.begin(),
+                    m_project.components.end(), [&](const ElectricalComponent& component) {
+                        return component.id() == *m_selectedComponentId;
+                    });
+                if (selected != m_project.components.end())
+                {
+                    const float angle = selected->rotation() * (3.14159265f / 180.0f);
+                    const float halfLength = selected->halfLengthPx() + 9.0f;
+                    const ImVec2 handle(origin.x + selected->x() + halfLength * std::cos(angle),
+                                        origin.y + selected->y() + halfLength * std::sin(angle));
+                    const ImVec2 mouse = ImGui::GetMousePos();
+                    if (std::abs(mouse.x - handle.x) <= 9.0f &&
+                        std::abs(mouse.y - handle.y) <= 9.0f)
+                    {
+                        m_componentResize = ComponentResize{
+                            selected->id(), selected->lengthCells(), m_dirty
+                        };
+                        resizeStarted = true;
+                    }
+                }
+            }
+
+            if (m_componentResize)
+            {
+                auto target = std::find_if(m_project.components.begin(), m_project.components.end(),
+                    [&](const ElectricalComponent& component) {
+                        return component.id() == m_componentResize->id;
+                    });
+                if (target == m_project.components.end())
+                    m_componentResize.reset();
+                else if (ImGui::IsMouseReleased(ImGuiMouseButton_Left))
+                {
+                    if (target->lengthCells() == m_componentResize->startLengthCells)
+                        m_dirty = m_componentResize->wasDirty;
+                    m_componentResize.reset();
+                }
+                else if (ImGui::IsMouseDown(ImGuiMouseButton_Left) &&
+                         ImGui::IsMouseDragging(ImGuiMouseButton_Left, 4.0f))
+                {
+                    const ImVec2 mouse = ImGui::GetMousePos();
+                    const float dx = mouse.x - origin.x - target->x();
+                    const float dy = mouse.y - origin.y - target->y();
+                    const float angle = target->rotation() * (3.14159265f / 180.0f);
+                    const float localX = dx * std::cos(angle) + dy * std::sin(angle);
+                    const int lengthCells = std::clamp(
+                        static_cast<int>(std::round(localX / ElectricalComponent::gridSize)) * 2,
+                        ElectricalComponent::minLengthCells, ElectricalComponent::maxLengthCells);
+                    if (lengthCells != target->lengthCells())
+                    {
+                        target->setLengthCells(lengthCells);
+                        m_dirty = true;
+                    }
+                }
+            }
+
             // Select on mouse-down in edit mode; simulation continues to toggle on click.
-            if (!m_placementTool && m_dialog == DialogMode::None &&
+            if (!resizeStarted && !m_componentResize && !m_placementTool &&
+                m_dialog == DialogMode::None &&
                 ((m_simulationMode && clicked) ||
                  (!m_simulationMode && hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left))))
             {
@@ -300,7 +379,8 @@ void EditorLayer::renderCanvas()
                     const float cs = std::cos(radians), sn = std::sin(radians);
                     const float localX = dx * cs + dy * sn;
                     const float localY = -dx * sn + dy * cs;
-                    if (std::abs(localX) <= 42.0f && std::abs(localY) <= 24.0f)
+                    if (std::abs(localX) <= it->halfLengthPx() + 8.0f &&
+                        std::abs(localY) <= 24.0f)
                     {
                         selectComponent(*it);
                         if (m_simulationMode)
@@ -365,7 +445,8 @@ void EditorLayer::renderCanvas()
                     drawLightSwitch(draw, ImVec2(origin.x + component.x(),
                                                  origin.y + component.y()), component, false,
                                     m_selectedComponentId == component.id(),
-                                    m_simulationMode && m_closedSwitches.contains(component.id()));
+                                    m_simulationMode && m_closedSwitches.contains(component.id()),
+                                    !m_simulationMode && !m_placementTool);
             }
 
             if (hovered && !m_simulationMode && m_placementTool.has_value() &&
@@ -393,6 +474,21 @@ void EditorLayer::renderCanvas()
     ImGui::PopStyleColor();
 }
 
+void EditorLayer::cancelComponentResize()
+{
+    if (!m_componentResize) return;
+
+    const auto it = std::find_if(m_project.components.begin(), m_project.components.end(),
+        [&](const ElectricalComponent& component) {
+            return component.id() == m_componentResize->id;
+        });
+    if (it != m_project.components.end())
+        it->setLengthCells(m_componentResize->startLengthCells);
+
+    m_dirty = m_componentResize->wasDirty;
+    m_componentResize.reset();
+}
+
 void EditorLayer::cancelComponentDrag()
 {
     if (!m_componentDrag) return;
@@ -411,6 +507,7 @@ void EditorLayer::cancelComponentDrag()
 void EditorLayer::setSimulationMode(bool enabled)
 {
     cancelComponentDrag();
+    cancelComponentResize();
     m_simulationMode = enabled;
     m_closedSwitches.clear(); // Simulation states are transient and never saved.
     m_placementTool.reset();
@@ -476,6 +573,17 @@ void EditorLayer::renderPropertiesPanel()
                                   std::clamp(y, 0.0f, 1000000.0f));
             m_dirty = true;
         }
+
+        const char* lengths[] = { "4 cells (80 px)", "6 cells (120 px)", "8 cells (160 px)",
+                                  "10 cells (200 px)", "12 cells (240 px)", "14 cells (280 px)",
+                                  "16 cells (320 px)" };
+        int lengthIndex = (component.lengthCells() - ElectricalComponent::minLengthCells) / 2;
+        if (ImGui::Combo("Length", &lengthIndex, lengths, 7))
+        {
+            component.setLengthCells(ElectricalComponent::minLengthCells + lengthIndex * 2);
+            m_dirty = true;
+        }
+        ImGui::TextDisabled("Terminals align with grid when center is on-grid.");
 
         const char* rotations[] = { "0 deg", "90 deg", "180 deg", "270 deg" };
         int rotationIndex = component.rotation() / 90;
@@ -571,6 +679,7 @@ void EditorLayer::navigate(const fs::path& path)
 void EditorLayer::showDialog(DialogMode mode)
 {
     cancelComponentDrag();
+    cancelComponentResize();
     m_dialog = mode;
     m_error.clear();
     m_selectedFile.clear();
@@ -599,6 +708,7 @@ void EditorLayer::saveProject(const fs::path& path)
 void EditorLayer::openProject(const fs::path& path)
 {
     cancelComponentDrag();
+    cancelComponentResize();
     ProjectDocument loaded;
     if (FileHandler::load(path, loaded, m_error))
     {
