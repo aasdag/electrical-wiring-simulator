@@ -267,7 +267,7 @@ void EditorLayer::renderFileDialog()
     const float dialogWidth = std::min(960.0f, std::max(280.0f, viewport->WorkSize.x - 32.0f));
     const float dialogHeight = std::min(620.0f, std::max(340.0f, viewport->WorkSize.y - 32.0f));
     ImGui::SetNextWindowSize(ImVec2(dialogWidth, dialogHeight), ImGuiCond_Always);
-    ImGui::SetNextWindowPos(viewport->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowPos(viewport->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
 
     // Scoped colors: the rest of the editor keeps its own ImGui appearance.
     const ImVec4 accent(0.32f, 0.68f, 1.0f, 1.0f);
