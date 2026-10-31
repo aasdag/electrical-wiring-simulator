@@ -385,6 +385,7 @@ void EditorLayer::renderFileDialog()
 
             ImGui::TableNextRow(ImGuiTableRowFlags_None, 40.0f);
             ImGui::TableSetColumnIndex(0);
+            const float nameColumnWidth = ImGui::GetContentRegionAvail().x;
             ImGui::PushID(filename.c_str());
             const bool selected = filename == m_selectedFile;
             if (ImGui::Selectable("##entry", selected,
@@ -406,7 +407,7 @@ void EditorLayer::renderFileDialog()
             drawExplorerIcon(ImVec2(rowMin.x + 7.0f, rowMin.y + 5.0f), folder);
 
             // Clip long filenames in the first column rather than covering TYPE.
-            ImGui::PushClipRect(rowMin, ImVec2(rowMin.x + ImGui::TableGetColumnWidth(0) - 9.0f,
+            ImGui::PushClipRect(rowMin, ImVec2(rowMin.x + nameColumnWidth - 9.0f,
                                               rowMin.y + 34.0f), true);
             ImGui::GetWindowDrawList()->AddText(
                 ImVec2(rowMin.x + 40.0f, rowMin.y + 9.0f),
