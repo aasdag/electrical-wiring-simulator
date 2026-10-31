@@ -60,10 +60,15 @@ namespace
 
     // A single-pole light-switch symbol in canvas coordinates, rotated around its center.
     void drawLightSwitch(ImDrawList* draw, ImVec2 center,
-                         const ElectricalComponent& component, bool preview, bool selected = false)
+                         const ElectricalComponent& component, bool preview, bool selected = false,
+                         bool closed = false)
     {
-        const ImU32 stroke = preview ? IM_COL32(90, 186, 255, 160) : IM_COL32(148, 217, 255, 255);
-        const ImU32 fill = preview ? IM_COL32(90, 186, 255, 110) : IM_COL32(45, 117, 177, 255);
+        const ImU32 stroke = preview ? IM_COL32(90, 186, 255, 160)
+                                   : closed ? IM_COL32(95, 225, 161, 255)
+                                            : IM_COL32(148, 217, 255, 255);
+        const ImU32 fill = preview ? IM_COL32(90, 186, 255, 110)
+                                 : closed ? IM_COL32(35, 160, 106, 255)
+                                          : IM_COL32(45, 117, 177, 255);
         const float radians = component.rotation() * (3.14159265f / 180.0f);
         const float cs = std::cos(radians), sn = std::sin(radians);
         const auto point = [&](float x, float y) {
@@ -77,7 +82,8 @@ namespace
         draw->AddCircle(point(-14, 0), 4.3f, stroke, 0, 1.8f);
         draw->AddCircleFilled(point(14, 0), 4.3f, fill);
         draw->AddCircle(point(14, 0), 4.3f, stroke, 0, 1.8f);
-        draw->AddLine(point(-11, -3), point(7, -16), stroke, 2.4f);
+        draw->AddLine(point(-11, -3), closed ? point(11, 0) : point(7, -16),
+                      stroke, 2.4f);
 
         if (selected)
             draw->AddQuad(point(-42, -24), point(42, -24), point(42, 24), point(-42, 24),
@@ -114,16 +120,15 @@ void EditorLayer::onRender()
 
 void EditorLayer::onImGuiRender()
 {
-    // Cancel the active placement tool before drawing the toolbox/canvas.
-    // Never consume Escape for placement while a file dialog is open.
-    if (m_dialog == DialogMode::None && ImGui::IsKeyPressed(ImGuiKey_Escape))
+    // Escape and right-click cancel the current tool/mode, not the application.
+    if (m_dialog == DialogMode::None &&
+        (ImGui::IsKeyPressed(ImGuiKey_Escape) ||
+         ImGui::IsMouseClicked(ImGuiMouseButton_Right)))
     {
-        if (m_placementTool) m_placementTool.reset();
-        else m_selectedComponentId.reset();
+        if (m_simulationMode) setSimulationMode(false);
+        else if (m_placementTool) m_placementTool.reset();
+        else if (ImGui::IsKeyPressed(ImGuiKey_Escape)) m_selectedComponentId.reset();
     }
-    else if (m_dialog == DialogMode::None && m_placementTool &&
-             ImGui::IsMouseClicked(ImGuiMouseButton_Right))
-        m_placementTool.reset();
 
     renderMenuBar();
     renderToolbox();
@@ -155,8 +160,7 @@ void EditorLayer::performAction(PendingAction action)
             m_dirty = false;
             copyText(m_name.data(), m_name.size(), m_project.name);
             m_notes.fill('\0');
-            m_placementTool.reset();
-            m_selectedComponentId.reset();
+            setSimulationMode(false);
             break;
         case PendingAction::Open: showDialog(DialogMode::Open); break;
         case PendingAction::Exit: Core::Application::get().stop(); break;
@@ -208,9 +212,10 @@ void EditorLayer::renderToolbox()
                      ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
                      ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoSavedSettings))
     {
-        ImGui::TextDisabled("TOOLBOX");
-        ImGui::SameLine(90.0f);
+        ImGui::TextDisabled(m_simulationMode ? "SIMULATION" : "TOOLBOX");
+        ImGui::SameLine(100.0f);
         const bool placing = m_placementTool.has_value();
+        ImGui::BeginDisabled(m_simulationMode);
         ImGui::PushStyleColor(ImGuiCol_Button, placing ? ImVec4(0.14f, 0.37f, 0.58f, 1.0f)
                                                        : ImVec4(0.18f, 0.22f, 0.28f, 1.0f));
         if (ImGui::Button("Light switch", ImVec2(146, 34)))
@@ -219,11 +224,18 @@ void EditorLayer::renderToolbox()
             else m_placementTool = ElectricalComponentType::LightSwitch;
         }
         ImGui::PopStyleColor();
+        ImGui::EndDisabled();
         ImGui::SameLine();
-        ImGui::TextDisabled("%s", placing ? "Click to place  |  Esc or right-click to cancel"
-                                          : "Select a component to start placing");
+        ImGui::PushStyleColor(ImGuiCol_Button, m_simulationMode
+            ? ImVec4(0.58f, 0.23f, 0.23f, 1.0f) : ImVec4(0.11f, 0.39f, 0.29f, 1.0f));
+        if (ImGui::Button(m_simulationMode ? "Stop simulation" : "Start simulation", ImVec2(166, 34)))
+            setSimulationMode(!m_simulationMode);
+        ImGui::PopStyleColor();
         ImGui::SameLine();
-        ImGui::TextDisabled("  %zu placed", m_project.components.size());
+        ImGui::TextDisabled("%s", m_simulationMode
+            ? "Click a switch to toggle  |  Esc / right-click to stop"
+            : placing ? "Click to place  |  Esc / right-click to cancel"
+                      : "Select a component to place");
     }
     ImGui::End();
     ImGui::PopStyleVar();
@@ -246,7 +258,9 @@ void EditorLayer::renderCanvas()
                      ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
                      ImGuiWindowFlags_NoBringToFrontOnFocus))
     {
-        ImGui::TextColored(ImVec4(0.63f, 0.77f, 0.89f, 1.0f), "DESIGN CANVAS");
+        ImGui::TextColored(m_simulationMode ? ImVec4(0.37f, 0.88f, 0.62f, 1.0f)
+                                           : ImVec4(0.63f, 0.77f, 0.89f, 1.0f),
+                           m_simulationMode ? "SIMULATION MODE" : "DESIGN CANVAS");
         ImGui::SameLine();
         ImGui::TextDisabled("  Grid: 20 px");
         ImGui::Separator();
@@ -269,7 +283,7 @@ void EditorLayer::renderCanvas()
                               ImVec2(end.x, origin.y + y), IM_COL32(57, 70, 88, 120));
 
             // Select the topmost component under the cursor when not placing a new one.
-            if (clicked && !m_placementTool)
+            if (clicked && !m_placementTool && m_dialog == DialogMode::None)
             {
                 m_selectedComponentId.reset();
                 const ImVec2 mouse = ImGui::GetMousePos();
@@ -284,6 +298,8 @@ void EditorLayer::renderCanvas()
                     if (std::abs(localX) <= 42.0f && std::abs(localY) <= 24.0f)
                     {
                         selectComponent(*it);
+                        if (m_simulationMode && !m_closedSwitches.erase(it->id()))
+                            m_closedSwitches.insert(it->id());
                         break;
                     }
                 }
@@ -294,10 +310,12 @@ void EditorLayer::renderCanvas()
                 if (component.type() == ElectricalComponentType::LightSwitch)
                     drawLightSwitch(draw, ImVec2(origin.x + component.x(),
                                                  origin.y + component.y()), component, false,
-                                    m_selectedComponentId == component.id());
+                                    m_selectedComponentId == component.id(),
+                                    m_simulationMode && m_closedSwitches.contains(component.id()));
             }
 
-            if (hovered && m_placementTool.has_value() && size.x >= 80.0f && size.y >= 80.0f)
+            if (hovered && !m_simulationMode && m_placementTool.has_value() &&
+                size.x >= 80.0f && size.y >= 80.0f)
             {
                 const ImVec2 mouse = ImGui::GetMousePos();
                 const float x = std::clamp(std::round((mouse.x - origin.x) / 20.0f) * 20.0f,
@@ -319,6 +337,14 @@ void EditorLayer::renderCanvas()
     }
     ImGui::End();
     ImGui::PopStyleColor();
+}
+
+void EditorLayer::setSimulationMode(bool enabled)
+{
+    m_simulationMode = enabled;
+    m_closedSwitches.clear(); // Simulation states are transient and never saved.
+    m_placementTool.reset();
+    m_selectedComponentId.reset();
 }
 
 void EditorLayer::selectComponent(const ElectricalComponent& component)
@@ -354,7 +380,17 @@ void EditorLayer::renderPropertiesPanel()
         ImGui::TextUnformatted("Light switch");
         ImGui::TextDisabled("ID: %llu", static_cast<unsigned long long>(component.id()));
         ImGui::Spacing();
+        if (m_simulationMode)
+        {
+            const bool closed = m_closedSwitches.contains(component.id());
+            ImGui::TextColored(closed ? ImVec4(0.37f, 0.88f, 0.62f, 1.0f)
+                                    : ImVec4(0.96f, 0.72f, 0.42f, 1.0f),
+                               "Contact: %s", closed ? "CLOSED" : "OPEN");
+            ImGui::TextDisabled("Click the switch to change its state.");
+            ImGui::Separator();
+        }
 
+        ImGui::BeginDisabled(m_simulationMode);
         if (ImGui::InputText("Name", m_componentLabel.data(), m_componentLabel.size()))
         {
             component.setLabel(m_componentLabel.data());
@@ -379,9 +415,11 @@ void EditorLayer::renderPropertiesPanel()
             m_dirty = true;
         }
 
+        ImGui::EndDisabled();
         ImGui::Spacing();
         ImGui::Separator();
-        ImGui::TextDisabled("Changes are saved with the project.");
+        ImGui::TextDisabled("%s", m_simulationMode ? "Switch state is not saved."
+                                                  : "Changes are saved with the project.");
         if (ImGui::Button("Deselect")) m_selectedComponentId.reset();
     }
     ImGui::End();
@@ -402,6 +440,7 @@ void EditorLayer::renderWorkspace()
     ImGui::SameLine();
     if (m_dirty) ImGui::TextColored(ImVec4(0.96f, 0.69f, 0.28f, 1), "Unsaved changes");
     else ImGui::TextDisabled("Saved");
+    ImGui::BeginDisabled(m_simulationMode);
     if (ImGui::InputText("Name", m_name.data(), m_name.size()))
     {
         m_project.name = m_name.data();
@@ -412,6 +451,7 @@ void EditorLayer::renderWorkspace()
         m_project.notes = m_notes.data();
         m_dirty = true;
     }
+    ImGui::EndDisabled();
     ImGui::TextDisabled("Components: %zu", m_project.components.size());
     ImGui::TextDisabled("File: %s", m_projectPath.empty() ? "Not saved" : m_projectPath.string().c_str());
     if (ImGui::Button("Open project...")) requestAction(PendingAction::Open);
@@ -491,8 +531,7 @@ void EditorLayer::openProject(const fs::path& path)
     if (FileHandler::load(path, loaded, m_error))
     {
         m_project = std::move(loaded);
-        m_placementTool.reset();
-        m_selectedComponentId.reset();
+        setSimulationMode(false);
         m_projectPath = path;
         m_dirty = false;
         copyText(m_name.data(), m_name.size(), m_project.name);

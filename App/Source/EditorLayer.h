@@ -8,6 +8,7 @@
 #include <optional>
 #include <string>
 #include <vector>
+#include <unordered_set>
 
 class EditorLayer final : public Core::Layer
 {
@@ -38,10 +39,13 @@ private:
     void requestAction(PendingAction action);
     void performAction(PendingAction action);
     void selectComponent(const ElectricalComponent& component);
+    void setSimulationMode(bool enabled);
 
     ProjectDocument m_project;
     std::optional<ElectricalComponentType> m_placementTool;
     std::optional<std::uint64_t> m_selectedComponentId;
+    bool m_simulationMode = false;
+    std::unordered_set<std::uint64_t> m_closedSwitches;
     std::array<char, 64> m_componentLabel{};
     std::filesystem::path m_projectPath;
     std::filesystem::path m_directory;
